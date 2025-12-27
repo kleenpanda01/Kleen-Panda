@@ -82,8 +82,8 @@ const twilioPhone = process.env.TWILIO_PHONE || '+18559187119';
 // Send SMS helper
 async function sendSMS(to, message) {
   if (!twilioClient) {
-    console.log('Twilio not configured - skipping SMS to:', to);
-    return false;
+    console.log('Twilio not configured - TWILIO_SID:', !!process.env.TWILIO_SID, 'TWILIO_AUTH:', !!process.env.TWILIO_AUTH);
+    return { success: false, error: 'Twilio not configured. Please add TWILIO_SID and TWILIO_AUTH environment variables.' };
   }
   try {
     // Format phone number - ensure it starts with +1 for US
@@ -91,16 +91,18 @@ async function sendSMS(to, message) {
     if (phone.length === 10) phone = '1' + phone;
     if (!phone.startsWith('+')) phone = '+' + phone;
     
-    await twilioClient.messages.create({
+    console.log('Attempting to send SMS to:', phone, 'from:', twilioPhone);
+    
+    const result = await twilioClient.messages.create({
       body: message,
       from: twilioPhone,
       to: phone
     });
-    console.log('SMS sent to:', phone);
-    return true;
+    console.log('SMS sent successfully, SID:', result.sid);
+    return { success: true, sid: result.sid };
   } catch (err) {
-    console.error('SMS error:', err.message);
-    return false;
+    console.error('SMS error details:', err.code, err.message, err.moreInfo);
+    return { success: false, error: err.message };
   }
 }
 
@@ -205,9 +207,17 @@ async function initDB() {
         notes TEXT,
         created_by INTEGER,
         created_by_name VARCHAR(255),
+        received_by VARCHAR(255),
+        received_at TIMESTAMP,
+        cleaned_by VARCHAR(255),
+        cleaned_at TIMESTAMP,
+        ready_by VARCHAR(255),
+        ready_at TIMESTAMP,
         delivery_photo TEXT,
         delivered_at TIMESTAMP,
         delivered_by VARCHAR(255),
+        pickup_by VARCHAR(255),
+        pickup_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -219,6 +229,9 @@ async function initDB() {
         clock_in TIMESTAMP,
         clock_out TIMESTAMP,
         hours_worked DECIMAL(10,2),
+        machine_card_start DECIMAL(10,2) DEFAULT 0,
+        machine_card_end DECIMAL(10,2) DEFAULT 0,
+        shift_notes TEXT,
         date DATE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -240,6 +253,16 @@ async function initDB() {
         user_id INTEGER,
         user_name VARCHAR(255),
         date DATE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      
+      CREATE TABLE IF NOT EXISTS feedback (
+        id SERIAL PRIMARY KEY,
+        customer_name VARCHAR(255),
+        customer_email VARCHAR(255),
+        customer_phone VARCHAR(50),
+        rating INTEGER,
+        message TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       
@@ -456,15 +479,19 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
     const { customer_id, customer_name, customer_phone, customer_email, customer_address, order_type, items, payment_method, weight, adjustment, discount, notes } = req.body;
     const order_number = await getNextOrderNumber();
     
+    // Get tax rate from settings
+    const settingsResult = await pool.query("SELECT value FROM settings WHERE key = 'tax_rate'");
+    const taxRate = settingsResult.rows.length > 0 ? parseFloat(settingsResult.rows[0].value) / 100 : 0.08875;
+    
     const subtotal = items.reduce((sum, i) => sum + (i.price * i.quantity), 0);
     const discountAmount = subtotal * ((discount || 0) / 100);
     const afterDiscount = subtotal - discountAmount + (adjustment || 0);
-    const tax = afterDiscount * 0.08875;
+    const tax = afterDiscount * taxRate;
     const total = Math.max(0, afterDiscount + tax);
     
     const result = await pool.query(
-      `INSERT INTO orders (order_number, customer_id, customer_name, customer_phone, customer_email, customer_address, order_type, items, subtotal, tax, discount, adjustment, total, weight, payment_method, notes, created_by, created_by_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *`,
+      `INSERT INTO orders (order_number, customer_id, customer_name, customer_phone, customer_email, customer_address, order_type, items, subtotal, tax, discount, adjustment, total, weight, payment_method, notes, created_by, created_by_name, received_by, received_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18, NOW()) RETURNING *`,
       [order_number, customer_id, customer_name, customer_phone, customer_email, customer_address, order_type || 'counter', JSON.stringify(items), subtotal, tax, discount || 0, adjustment || 0, total, weight || 0, payment_method, notes, req.user.id, req.user.name]
     );
     res.json({...result.rows[0], total: parseFloat(result.rows[0].total)});
@@ -476,9 +503,31 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
 app.put('/api/orders/:id/status', authMiddleware, async (req, res) => {
   try {
     const { status } = req.body;
+    const staffName = req.user.name;
+    
+    // Build dynamic update based on status
+    let updateFields = 'status = $1, updated_at = NOW()';
+    let params = [status];
+    
+    if (status === 'received') {
+      updateFields += ', received_by = $3, received_at = NOW()';
+      params.push(req.params.id, staffName);
+    } else if (status === 'cleaned') {
+      updateFields += ', cleaned_by = $3, cleaned_at = NOW()';
+      params.push(req.params.id, staffName);
+    } else if (status === 'ready') {
+      updateFields += ', ready_by = $3, ready_at = NOW()';
+      params.push(req.params.id, staffName);
+    } else if (status === 'delivered') {
+      updateFields += ', delivered_by = $3, delivered_at = NOW()';
+      params.push(req.params.id, staffName);
+    } else {
+      params.push(req.params.id);
+    }
+    
     const result = await pool.query(
-      'UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
-      [status, req.params.id]
+      `UPDATE orders SET ${updateFields} WHERE id = $2 RETURNING *`,
+      params
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -486,10 +535,14 @@ app.put('/api/orders/:id/status', authMiddleware, async (req, res) => {
   }
 });
 
-// General order update (weight, items, notes, adjustment)
+// General order update (weight, items, notes, adjustment, order_type)
 app.put('/api/orders/:id', authMiddleware, async (req, res) => {
   try {
-    const { weight, items, notes, adjustment, payment_status } = req.body;
+    const { weight, items, notes, adjustment, payment_status, order_type } = req.body;
+    
+    // Get current order to get tax rate from settings
+    const settingsResult = await pool.query("SELECT value FROM settings WHERE key = 'tax_rate'");
+    const taxRate = settingsResult.rows.length > 0 ? parseFloat(settingsResult.rows[0].value) / 100 : 0.08875;
     
     // Recalculate totals if items changed
     let subtotal = 0;
@@ -499,7 +552,7 @@ app.put('/api/orders/:id', authMiddleware, async (req, res) => {
     
     const adj = adjustment || 0;
     const afterAdj = subtotal + adj;
-    const tax = afterAdj * 0.08875;
+    const tax = afterAdj * taxRate;
     const total = Math.max(0, afterAdj + tax);
     
     const result = await pool.query(
@@ -512,9 +565,10 @@ app.put('/api/orders/:id', authMiddleware, async (req, res) => {
         tax = CASE WHEN $2 IS NOT NULL THEN $6 ELSE tax END,
         total = CASE WHEN $2 IS NOT NULL THEN $7 ELSE total END,
         payment_status = COALESCE($8, payment_status),
+        order_type = COALESCE($10, order_type),
         updated_at = NOW()
       WHERE id = $9 RETURNING *`,
-      [weight, items ? JSON.stringify(items) : null, notes, adjustment, subtotal, tax, total, payment_status, req.params.id]
+      [weight, items ? JSON.stringify(items) : null, notes, adjustment, subtotal, tax, total, payment_status, req.params.id, order_type]
     );
     res.json({...result.rows[0], total: parseFloat(result.rows[0].total)});
   } catch (err) {
@@ -551,11 +605,21 @@ app.post('/api/orders/:id/deliver', authMiddleware, async (req, res) => {
 // TIME ENTRIES
 app.get('/api/time-entries/status', authMiddleware, async (req, res) => {
   try {
+    // Get current user's clock status
     const result = await pool.query(
       'SELECT * FROM time_entries WHERE user_id = $1 AND clock_out IS NULL',
       [req.user.id]
     );
-    res.json({ clockedIn: result.rows.length > 0, entry: result.rows[0] });
+    // Check if ANY staff is clocked in (for admin to see)
+    const anyClocked = await pool.query(
+      'SELECT te.*, u.role FROM time_entries te JOIN users u ON te.user_id = u.id WHERE te.clock_out IS NULL AND u.role = $1',
+      ['staff']
+    );
+    res.json({ 
+      clockedIn: result.rows.length > 0, 
+      entry: result.rows[0],
+      otherStaffClockedIn: anyClocked.rows.length > 0 ? anyClocked.rows[0] : null
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -563,13 +627,48 @@ app.get('/api/time-entries/status', authMiddleware, async (req, res) => {
 
 app.post('/api/time-entries/clock-in', authMiddleware, async (req, res) => {
   try {
-    const check = await pool.query('SELECT id FROM time_entries WHERE user_id = $1 AND clock_out IS NULL', [req.user.id]);
-    if (check.rows.length > 0) return res.status(400).json({ error: 'Already clocked in' });
+    const { machine_card_start } = req.body;
+    
+    // Check if current user is already clocked in
+    const selfCheck = await pool.query('SELECT id FROM time_entries WHERE user_id = $1 AND clock_out IS NULL', [req.user.id]);
+    if (selfCheck.rows.length > 0) return res.status(400).json({ error: 'Already clocked in' });
+    
+    // Check if another STAFF member is clocked in (admin excluded from this check)
+    if (req.user.role === 'staff') {
+      const otherStaff = await pool.query(
+        `SELECT te.*, u.name FROM time_entries te 
+         JOIN users u ON te.user_id = u.id 
+         WHERE te.clock_out IS NULL AND u.role = 'staff' AND te.user_id != $1`,
+        [req.user.id]
+      );
+      if (otherStaff.rows.length > 0) {
+        return res.status(400).json({ 
+          error: `${otherStaff.rows[0].name} is still clocked in. Please clock them out first.`,
+          otherStaff: otherStaff.rows[0]
+        });
+      }
+    }
     
     const result = await pool.query(
-      'INSERT INTO time_entries (user_id, user_name, clock_in, date) VALUES ($1, $2, NOW(), CURRENT_DATE) RETURNING *',
-      [req.user.id, req.user.name]
+      'INSERT INTO time_entries (user_id, user_name, clock_in, machine_card_start, date) VALUES ($1, $2, NOW(), $3, CURRENT_DATE) RETURNING *',
+      [req.user.id, req.user.name, machine_card_start || 0]
     );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Force clock out another staff member
+app.post('/api/time-entries/force-clock-out', authMiddleware, async (req, res) => {
+  try {
+    const { user_id, machine_card_end } = req.body;
+    const result = await pool.query(
+      `UPDATE time_entries SET clock_out = NOW(), machine_card_end = $2, hours_worked = EXTRACT(EPOCH FROM (NOW() - clock_in))/3600 
+       WHERE user_id = $1 AND clock_out IS NULL RETURNING *`,
+      [user_id, machine_card_end || 0]
+    );
+    if (result.rows.length === 0) return res.status(400).json({ error: 'Staff member not clocked in' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -578,10 +677,11 @@ app.post('/api/time-entries/clock-in', authMiddleware, async (req, res) => {
 
 app.post('/api/time-entries/clock-out', authMiddleware, async (req, res) => {
   try {
+    const { machine_card_end, shift_notes } = req.body;
     const result = await pool.query(
-      `UPDATE time_entries SET clock_out = NOW(), hours_worked = EXTRACT(EPOCH FROM (NOW() - clock_in))/3600 
+      `UPDATE time_entries SET clock_out = NOW(), machine_card_end = $2, shift_notes = $3, hours_worked = EXTRACT(EPOCH FROM (NOW() - clock_in))/3600 
        WHERE user_id = $1 AND clock_out IS NULL RETURNING *`,
-      [req.user.id]
+      [req.user.id, machine_card_end || 0, shift_notes || '']
     );
     if (result.rows.length === 0) return res.status(400).json({ error: 'Not clocked in' });
     res.json(result.rows[0]);
@@ -741,6 +841,100 @@ app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
   }
 });
 
+// FEEDBACK
+app.post('/api/public/feedback', async (req, res) => {
+  try {
+    const { customer_name, customer_email, customer_phone, rating, message } = req.body;
+    
+    // Save feedback
+    const result = await pool.query(
+      'INSERT INTO feedback (customer_name, customer_email, customer_phone, rating, message) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [customer_name, customer_email, customer_phone, rating, message]
+    );
+    
+    // Get notification email from settings
+    const settingsResult = await pool.query("SELECT value FROM settings WHERE key = 'notification_email'");
+    const notifyEmail = settingsResult.rows.length > 0 ? settingsResult.rows[0].value : 'sales@kleenpanda.com';
+    
+    // Send email notification
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #1B9AAA; color: white; padding: 20px; text-align: center;">
+          <h1 style="margin: 0;">🐼 New Customer Feedback</h1>
+        </div>
+        <div style="padding: 20px; background: #f8f9fa;">
+          <p><strong>From:</strong> ${customer_name || 'Anonymous'}</p>
+          <p><strong>Email:</strong> ${customer_email || 'Not provided'}</p>
+          <p><strong>Phone:</strong> ${customer_phone || 'Not provided'}</p>
+          <p><strong>Rating:</strong> ${'⭐'.repeat(rating || 0)}</p>
+          <p><strong>Message:</strong></p>
+          <p style="background: white; padding: 15px; border-radius: 8px;">${message}</p>
+        </div>
+      </div>
+    `;
+    sendEmail(notifyEmail, '🐼 New Customer Feedback - Kleen Panda', html);
+    
+    res.json({ success: true, message: 'Thank you for your feedback!' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// STAFF PRODUCTIVITY REPORT
+app.get('/api/staff-productivity', authMiddleware, async (req, res) => {
+  try {
+    const { start, end, user_id } = req.query;
+    const startDate = start || new Date().toISOString().slice(0, 10);
+    const endDate = end || new Date().toISOString().slice(0, 10);
+    
+    // Get orders processed by each staff member in date range
+    let query = `
+      SELECT 
+        COALESCE(received_by, created_by_name) as staff_name,
+        COUNT(*) FILTER (WHERE received_by IS NOT NULL OR created_by_name IS NOT NULL) as orders_received,
+        COUNT(*) FILTER (WHERE cleaned_by IS NOT NULL) as orders_cleaned,
+        COUNT(*) FILTER (WHERE ready_by IS NOT NULL) as orders_ready,
+        COUNT(*) FILTER (WHERE pickup_by IS NOT NULL) as pickups_processed,
+        COALESCE(SUM(CASE WHEN payment_status = 'paid' AND payment_method = 'cash' THEN total ELSE 0 END), 0) as cash_collected,
+        array_agg(DISTINCT order_number) FILTER (WHERE received_by IS NOT NULL OR cleaned_by IS NOT NULL OR ready_by IS NOT NULL) as order_numbers
+      FROM orders 
+      WHERE DATE(created_at) BETWEEN $1 AND $2
+    `;
+    
+    const params = [startDate, endDate];
+    
+    if (user_id) {
+      query += ' AND (created_by = $3 OR received_by = (SELECT name FROM users WHERE id = $3) OR cleaned_by = (SELECT name FROM users WHERE id = $3) OR ready_by = (SELECT name FROM users WHERE id = $3))';
+      params.push(user_id);
+    }
+    
+    query += ' GROUP BY COALESCE(received_by, created_by_name)';
+    
+    const result = await pool.query(query, params);
+    
+    // Get time entries for the period
+    const timeQuery = `
+      SELECT user_name, 
+        SUM(hours_worked) as total_hours,
+        SUM(machine_card_start - machine_card_end) as machine_card_usage,
+        COUNT(*) as shifts
+      FROM time_entries 
+      WHERE date BETWEEN $1 AND $2
+      ${user_id ? 'AND user_id = $3' : ''}
+      GROUP BY user_name
+    `;
+    
+    const timeResult = await pool.query(timeQuery, user_id ? [startDate, endDate, user_id] : [startDate, endDate]);
+    
+    res.json({
+      productivity: result.rows,
+      timeEntries: timeResult.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // USERS
 app.get('/api/users', authMiddleware, adminOnly, async (req, res) => {
   try {
@@ -857,12 +1051,12 @@ app.post('/api/public/request-reset', async (req, res) => {
     resetCodes.set(cleanPhone, { code, expires: Date.now() + 10 * 60 * 1000, customerId: customer.id }); // 10 min expiry
     
     // Send SMS with code
-    const sent = await sendSMS(cleanPhone, `🐼 Kleen Panda: Your password reset code is ${code}. This code expires in 10 minutes.`);
+    const result = await sendSMS(cleanPhone, `🐼 Kleen Panda: Your password reset code is ${code}. This code expires in 10 minutes.`);
     
-    if (sent) {
+    if (result.success) {
       res.json({ success: true, message: 'Reset code sent to your phone' });
     } else {
-      res.status(500).json({ error: 'Failed to send SMS. Please try again.' });
+      res.status(500).json({ error: result.error || 'Failed to send SMS. Please try again.' });
     }
   } catch (err) {
     console.error('Reset request error:', err);
