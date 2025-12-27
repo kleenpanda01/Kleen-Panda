@@ -486,6 +486,42 @@ app.put('/api/orders/:id/status', authMiddleware, async (req, res) => {
   }
 });
 
+// General order update (weight, items, notes, adjustment)
+app.put('/api/orders/:id', authMiddleware, async (req, res) => {
+  try {
+    const { weight, items, notes, adjustment, payment_status } = req.body;
+    
+    // Recalculate totals if items changed
+    let subtotal = 0;
+    if (items && items.length > 0) {
+      subtotal = items.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+    }
+    
+    const adj = adjustment || 0;
+    const afterAdj = subtotal + adj;
+    const tax = afterAdj * 0.08875;
+    const total = Math.max(0, afterAdj + tax);
+    
+    const result = await pool.query(
+      `UPDATE orders SET 
+        weight = COALESCE($1, weight),
+        items = COALESCE($2, items),
+        notes = COALESCE($3, notes),
+        adjustment = COALESCE($4, adjustment),
+        subtotal = CASE WHEN $2 IS NOT NULL THEN $5 ELSE subtotal END,
+        tax = CASE WHEN $2 IS NOT NULL THEN $6 ELSE tax END,
+        total = CASE WHEN $2 IS NOT NULL THEN $7 ELSE total END,
+        payment_status = COALESCE($8, payment_status),
+        updated_at = NOW()
+      WHERE id = $9 RETURNING *`,
+      [weight, items ? JSON.stringify(items) : null, notes, adjustment, subtotal, tax, total, payment_status, req.params.id]
+    );
+    res.json({...result.rows[0], total: parseFloat(result.rows[0].total)});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put('/api/orders/:id/payment', authMiddleware, async (req, res) => {
   try {
     const { payment_status, payment_method } = req.body;
@@ -959,8 +995,9 @@ app.get('/api/driver/orders', authMiddleware, async (req, res) => {
     if (req.user.role !== 'driver' && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Driver access required' });
     }
+    // Only show pickup/delivery orders, not walk-in orders
     const result = await pool.query(
-      "SELECT * FROM orders WHERE status IN ('ready', 'collected') OR (status = 'received' AND order_type = 'pickup_delivery')"
+      "SELECT * FROM orders WHERE order_type = 'pickup_delivery' AND status IN ('received', 'collected', 'ready')"
     );
     res.json(result.rows.map(o => ({
       id: o.id, order_number: o.order_number, customer_name: o.customer_name,
