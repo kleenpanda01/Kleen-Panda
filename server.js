@@ -3,11 +3,121 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const { Pool } = require('pg');
+const nodemailer = require('nodemailer');
+const twilio = require('twilio');
 const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+const JWT_SECRET = process.env.JWT_SECRET || 'kleen-panda-secret-2024';
+
+// Email configuration (GoDaddy SMTP)
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtpout.secureserver.net',
+  port: parseInt(process.env.SMTP_PORT) || 465,
+  secure: true, // SSL
+  auth: {
+    user: process.env.EMAIL_USER || '',
+    pass: process.env.EMAIL_PASS || ''
+  }
+});
+
+// Send email helper
+async function sendEmail(to, subject, html) {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.log('Email not configured - skipping send to:', to);
+    return false;
+  }
+  try {
+    await transporter.sendMail({
+      from: `"Kleen Panda" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      html
+    });
+    console.log('Email sent to:', to);
+    return true;
+  } catch (err) {
+    console.error('Email error:', err.message);
+    return false;
+  }
+}
+
+// Send order notification to staff
+async function sendOrderNotification(order) {
+  const staffEmail = process.env.EMAIL_USER || 'sales@kleenpanda.com';
+  const subject = `🧺 New Order ${order.order_number} - ${order.customer_name}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background: #1B9AAA; color: white; padding: 20px; text-align: center;">
+        <h1 style="margin: 0;">🐼 Kleen Panda</h1>
+        <p style="margin: 5px 0;">New Pickup Order</p>
+      </div>
+      <div style="padding: 20px; background: #f8f9fa;">
+        <h2 style="color: #1B9AAA;">Order ${order.order_number}</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Customer:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #ddd;">${order.customer_name}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Phone:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><a href="tel:${order.customer_phone}">${order.customer_phone}</a></td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Address:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #ddd;">${order.customer_address}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Payment:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #ddd;">${order.payment_method || 'Pay Later'}</td></tr>
+          <tr><td style="padding: 8px 0;"><strong>Notes:</strong></td><td style="padding: 8px 0;">${order.notes || 'None'}</td></tr>
+        </table>
+      </div>
+      <div style="padding: 15px; background: #1B9AAA; color: white; text-align: center;">
+        <p style="margin: 0;">Please process this order promptly!</p>
+      </div>
+    </div>
+  `;
+  return sendEmail(staffEmail, subject, html);
+}
+
+// Twilio SMS Configuration
+const twilioClient = process.env.TWILIO_SID && process.env.TWILIO_AUTH 
+  ? twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH)
+  : null;
+const twilioPhone = process.env.TWILIO_PHONE || '+18559187119';
+
+// Send SMS helper
+async function sendSMS(to, message) {
+  if (!twilioClient) {
+    console.log('Twilio not configured - skipping SMS to:', to);
+    return false;
+  }
+  try {
+    // Format phone number - ensure it starts with +1 for US
+    let phone = to.replace(/\D/g, '');
+    if (phone.length === 10) phone = '1' + phone;
+    if (!phone.startsWith('+')) phone = '+' + phone;
+    
+    await twilioClient.messages.create({
+      body: message,
+      from: twilioPhone,
+      to: phone
+    });
+    console.log('SMS sent to:', phone);
+    return true;
+  } catch (err) {
+    console.error('SMS error:', err.message);
+    return false;
+  }
+}
+
+// Send order confirmation SMS to customer
+async function sendOrderSMS(order) {
+  if (!order.customer_phone) return false;
+  const message = `🐼 Kleen Panda: Order ${order.order_number} confirmed! We'll pick up your laundry at ${order.customer_address}. Questions? Call (347) 297-6088`;
+  return sendSMS(order.customer_phone, message);
+}
+
+// Send SMS to staff about new order
+async function sendStaffSMS(order) {
+  const staffPhone = process.env.STAFF_PHONE; // Optional staff notification number
+  if (!staffPhone) return false;
+  const message = `📦 New Order ${order.order_number}\n${order.customer_name}\n${order.customer_phone}\n${order.customer_address}`;
+  return sendSMS(staffPhone, message);
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || 'kleen-panda-secret-2024';
 
@@ -644,14 +754,16 @@ app.post('/api/public/customer-login', async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '');
     console.log('Customer login attempt for phone:', cleanPhone);
     
-    // Search for existing customer by cleaned phone
-    const existing = await pool.query(
-      "SELECT * FROM customers WHERE REGEXP_REPLACE(phone, '[^0-9]', '', 'g') = $1",
-      [cleanPhone]
-    );
-    console.log('Found customers:', existing.rows.length);
+    // Get ALL customers and find match in JavaScript (more reliable)
+    const allCustomers = await pool.query('SELECT * FROM customers');
+    const customer = allCustomers.rows.find(c => {
+      const dbPhone = (c.phone || '').replace(/\D/g, '');
+      return dbPhone === cleanPhone || dbPhone.endsWith(cleanPhone) || cleanPhone.endsWith(dbPhone);
+    });
     
-    if (existing.rows.length === 0) {
+    console.log('Found customer:', customer ? customer.id : 'none');
+    
+    if (!customer) {
       // New customer registration
       if (!name) return res.status(400).json({ error: 'Name required for new customers. Please use the Register page.' });
       if (!password) return res.status(400).json({ error: 'Password required' });
@@ -661,23 +773,23 @@ app.post('/api/public/customer-login', async (req, res) => {
         'INSERT INTO customers (name, phone, email, address, password, sms_consent) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
         [name, cleanPhone, email || '', address || '', password, sms_consent || false]
       );
-      const customer = result.rows[0];
-      console.log('Customer created with ID:', customer.id);
-      const token = jwt.sign({ customerId: customer.id }, JWT_SECRET, { expiresIn: '30d' });
-      return res.json({ customer: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address: customer.address, paymentMethods: [] }, token, isNew: true });
+      const newCustomer = result.rows[0];
+      console.log('Customer created with ID:', newCustomer.id);
+      const token = jwt.sign({ customerId: newCustomer.id }, JWT_SECRET, { expiresIn: '30d' });
+      return res.json({ customer: { id: newCustomer.id, name: newCustomer.name, phone: newCustomer.phone, email: newCustomer.email, address: newCustomer.address, paymentMethods: [] }, token, isNew: true });
     }
     
     // Existing customer login
-    const customer = existing.rows[0];
-    console.log('Existing customer found:', customer.id, customer.name);
+    console.log('Existing customer found:', customer.id, customer.name, 'stored password:', customer.password ? 'yes' : 'no');
     if (!password) return res.status(400).json({ error: 'Password required' });
     if (customer.password && customer.password !== password) {
-      console.log('Password mismatch for customer:', customer.id);
-      return res.status(401).json({ error: 'Invalid password' });
+      console.log('Password mismatch - entered:', password, 'stored:', customer.password);
+      return res.status(401).json({ error: 'Invalid password. Try again or contact support.' });
     }
     // If customer has no password yet (legacy), set it
     if (!customer.password) {
       await pool.query('UPDATE customers SET password = $1 WHERE id = $2', [password, customer.id]);
+      console.log('Set password for legacy customer');
     }
     
     const token = jwt.sign({ customerId: customer.id }, JWT_SECRET, { expiresIn: '30d' });
@@ -685,6 +797,77 @@ app.post('/api/public/customer-login', async (req, res) => {
   } catch (err) {
     console.error('Customer login error:', err);
     res.status(500).json({ error: 'Database error: ' + err.message });
+  }
+});
+
+// Password reset - request code
+const resetCodes = new Map(); // In-memory store for reset codes
+app.post('/api/public/request-reset', async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: 'Phone number required' });
+    
+    const cleanPhone = phone.replace(/\D/g, '');
+    const allCustomers = await pool.query('SELECT * FROM customers');
+    const customer = allCustomers.rows.find(c => {
+      const dbPhone = (c.phone || '').replace(/\D/g, '');
+      return dbPhone === cleanPhone || dbPhone.endsWith(cleanPhone) || cleanPhone.endsWith(dbPhone);
+    });
+    
+    if (!customer) {
+      return res.status(404).json({ error: 'No account found with this phone number' });
+    }
+    
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    resetCodes.set(cleanPhone, { code, expires: Date.now() + 10 * 60 * 1000, customerId: customer.id }); // 10 min expiry
+    
+    // Send SMS with code
+    const sent = await sendSMS(cleanPhone, `🐼 Kleen Panda: Your password reset code is ${code}. This code expires in 10 minutes.`);
+    
+    if (sent) {
+      res.json({ success: true, message: 'Reset code sent to your phone' });
+    } else {
+      res.status(500).json({ error: 'Failed to send SMS. Please try again.' });
+    }
+  } catch (err) {
+    console.error('Reset request error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Password reset - verify code and set new password
+app.post('/api/public/reset-password', async (req, res) => {
+  try {
+    const { phone, code, newPassword } = req.body;
+    if (!phone || !code || !newPassword) {
+      return res.status(400).json({ error: 'Phone, code, and new password required' });
+    }
+    
+    const cleanPhone = phone.replace(/\D/g, '');
+    const resetData = resetCodes.get(cleanPhone);
+    
+    if (!resetData) {
+      return res.status(400).json({ error: 'No reset code found. Please request a new one.' });
+    }
+    
+    if (Date.now() > resetData.expires) {
+      resetCodes.delete(cleanPhone);
+      return res.status(400).json({ error: 'Code expired. Please request a new one.' });
+    }
+    
+    if (resetData.code !== code) {
+      return res.status(400).json({ error: 'Invalid code' });
+    }
+    
+    // Update password
+    await pool.query('UPDATE customers SET password = $1 WHERE id = $2', [newPassword, resetData.customerId]);
+    resetCodes.delete(cleanPhone);
+    
+    res.json({ success: true, message: 'Password updated successfully!' });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -728,7 +911,45 @@ app.post('/api/public/orders', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'received') RETURNING *`,
       [order_number, decoded.customerId, customer_name, customer_phone, customer_email, customer_address, order_type || 'pickup_delivery', JSON.stringify(items), notes, payment_method]
     );
-    res.json(result.rows[0]);
+    
+    const order = result.rows[0];
+    
+    // Send email notification to staff
+    sendOrderNotification(order);
+    
+    // Send SMS confirmation to customer
+    sendOrderSMS(order);
+    
+    // Optionally send SMS to staff
+    sendStaffSMS(order);
+    
+    // Send confirmation to customer if they have email
+    if (customer_email) {
+      sendEmail(customer_email, `✅ Order ${order_number} Confirmed - Kleen Panda`, `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: #1B9AAA; color: white; padding: 20px; text-align: center;">
+            <h1 style="margin: 0;">🐼 Kleen Panda</h1>
+            <p style="margin: 5px 0;">Order Confirmation</p>
+          </div>
+          <div style="padding: 20px; background: #f8f9fa;">
+            <h2 style="color: #28a745;">✅ Thank you for your order!</h2>
+            <p>Hi ${customer_name},</p>
+            <p>Your pickup has been scheduled. We'll be in touch soon!</p>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+              <tr><td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Order #:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #ddd;">${order_number}</td></tr>
+              <tr><td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Pickup Address:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #ddd;">${customer_address}</td></tr>
+              <tr><td style="padding: 8px 0;"><strong>Notes:</strong></td><td style="padding: 8px 0;">${notes || 'None'}</td></tr>
+            </table>
+          </div>
+          <div style="padding: 15px; background: #1B9AAA; color: white; text-align: center;">
+            <p style="margin: 0;">Questions? Call us at (347) 297-6088</p>
+            <p style="margin: 5px 0; font-size: 12px;">113 E Tremont Ave, Bronx, NY</p>
+          </div>
+        </div>
+      `);
+    }
+    
+    res.json(order);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
