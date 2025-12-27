@@ -119,8 +119,6 @@ async function sendStaffSMS(order) {
   return sendSMS(staffPhone, message);
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'kleen-panda-secret-2024';
-
 // Check if DATABASE_URL is set
 if (!process.env.DATABASE_URL) {
   console.error('WARNING: DATABASE_URL environment variable is not set!');
