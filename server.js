@@ -272,6 +272,61 @@ async function initDB() {
       );
     `);
     
+    // MIGRATIONS: Add missing columns to existing tables
+    console.log('Running migrations...');
+    
+    // Orders table migrations
+    const orderColumns = [
+      { name: 'received_by', type: 'VARCHAR(255)' },
+      { name: 'received_at', type: 'TIMESTAMP' },
+      { name: 'cleaned_by', type: 'VARCHAR(255)' },
+      { name: 'cleaned_at', type: 'TIMESTAMP' },
+      { name: 'ready_by', type: 'VARCHAR(255)' },
+      { name: 'ready_at', type: 'TIMESTAMP' },
+      { name: 'pickup_by', type: 'VARCHAR(255)' },
+      { name: 'pickup_at', type: 'TIMESTAMP' }
+    ];
+    
+    for (const col of orderColumns) {
+      try {
+        await client.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`);
+      } catch (e) {
+        // Column might already exist, that's fine
+      }
+    }
+    
+    // Time entries table migrations
+    const timeColumns = [
+      { name: 'machine_card_start', type: 'DECIMAL(10,2) DEFAULT 0' },
+      { name: 'machine_card_end', type: 'DECIMAL(10,2) DEFAULT 0' },
+      { name: 'shift_notes', type: 'TEXT' }
+    ];
+    
+    for (const col of timeColumns) {
+      try {
+        await client.query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`);
+      } catch (e) {
+        // Column might already exist
+      }
+    }
+    
+    // Create feedback table if not exists
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS feedback (
+          id SERIAL PRIMARY KEY,
+          customer_name VARCHAR(255),
+          customer_email VARCHAR(255),
+          customer_phone VARCHAR(50),
+          rating INTEGER,
+          message TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (e) {}
+    
+    console.log('Migrations complete.');
+    
     // Check if admin user exists
     const adminCheck = await client.query("SELECT id FROM users WHERE username = 'admin'");
     if (adminCheck.rows.length === 0) {
@@ -597,6 +652,28 @@ app.post('/api/orders/:id/deliver', authMiddleware, async (req, res) => {
       ['delivered', photo, req.user.name, req.params.id]
     );
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE ORDER (admin only)
+app.delete('/api/orders/:id', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM orders WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE ALL ORDERS (admin only)
+app.delete('/api/orders', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM orders');
+    // Reset order number sequence
+    await pool.query("DELETE FROM settings WHERE key = 'last_order_number'");
+    res.json({ success: true, message: 'All orders deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
