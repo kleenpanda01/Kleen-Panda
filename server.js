@@ -171,6 +171,10 @@ async function initDB() {
         discount DECIMAL(5,2) DEFAULT 0,
         sms_consent BOOLEAN DEFAULT FALSE,
         payment_methods JSONB DEFAULT '[]',
+        subscription_plan VARCHAR(50),
+        card_last_four VARCHAR(4),
+        card_token TEXT,
+        zelle_id VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       
@@ -324,6 +328,20 @@ async function initDB() {
         )
       `);
     } catch (e) {}
+    
+    // Customer table migrations
+    const customerColumns = [
+      { name: 'subscription_plan', type: 'VARCHAR(50)' },
+      { name: 'card_last_four', type: 'VARCHAR(4)' },
+      { name: 'card_token', type: 'TEXT' },
+      { name: 'zelle_id', type: 'VARCHAR(255)' }
+    ];
+    
+    for (const col of customerColumns) {
+      try {
+        await client.query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`);
+      } catch (e) {}
+    }
     
     console.log('Migrations complete.');
     
@@ -508,12 +526,40 @@ app.post('/api/customers', authMiddleware, async (req, res) => {
 
 app.put('/api/customers/:id', authMiddleware, async (req, res) => {
   try {
-    const { name, phone, email, address, discount } = req.body;
+    const { name, phone, email, address, discount, subscription_plan, card_last_four, zelle_id } = req.body;
     const result = await pool.query(
-      'UPDATE customers SET name = COALESCE($1, name), phone = COALESCE($2, phone), email = COALESCE($3, email), address = COALESCE($4, address), discount = COALESCE($5, discount) WHERE id = $6 RETURNING *',
-      [name, phone, email, address, discount, req.params.id]
+      `UPDATE customers SET 
+        name = COALESCE($1, name), 
+        phone = COALESCE($2, phone), 
+        email = COALESCE($3, email), 
+        address = COALESCE($4, address), 
+        discount = COALESCE($5, discount),
+        subscription_plan = COALESCE($6, subscription_plan),
+        card_last_four = COALESCE($7, card_last_four),
+        zelle_id = COALESCE($8, zelle_id)
+      WHERE id = $9 RETURNING *`,
+      [name, phone, email, address, discount, subscription_plan, card_last_four, zelle_id, req.params.id]
     );
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE CUSTOMER (admin only)
+app.delete('/api/customers/:id', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    // Check if customer has orders
+    const ordersCheck = await pool.query('SELECT COUNT(*) FROM orders WHERE customer_id = $1', [req.params.id]);
+    const orderCount = parseInt(ordersCheck.rows[0].count);
+    
+    if (orderCount > 0) {
+      // Just nullify the customer_id in orders rather than preventing delete
+      await pool.query('UPDATE orders SET customer_id = NULL WHERE customer_id = $1', [req.params.id]);
+    }
+    
+    await pool.query('DELETE FROM customers WHERE id = $1', [req.params.id]);
+    res.json({ success: true, message: 'Customer deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -641,6 +687,92 @@ app.put('/api/orders/:id/payment', authMiddleware, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// CLEARENT CNP (Card Not Present) PAYMENT PROCESSING
+app.post('/api/orders/:id/charge-card', authMiddleware, async (req, res) => {
+  try {
+    const { card_number, exp_date, cvv, amount, order_number } = req.body;
+    
+    // Get Clearent API key from settings or use default
+    const settingsResult = await pool.query("SELECT value FROM settings WHERE key = 'clearent_api_key'");
+    const apiKey = settingsResult.rows.length > 0 && settingsResult.rows[0].value 
+      ? settingsResult.rows[0].value 
+      : '89649998a14244c79ea29f6ffcd143c6';
+    
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Clearent API key not configured. Go to Settings to add it.' });
+    }
+    
+    // Clean card number (remove spaces/dashes)
+    const cleanCard = card_number.replace(/\D/g, '');
+    
+    // Format expiry date (MM/YY -> MMYY)
+    const cleanExp = exp_date.replace(/\D/g, '');
+    
+    // Validate inputs
+    if (cleanCard.length < 15 || cleanCard.length > 16) {
+      return res.status(400).json({ error: 'Invalid card number' });
+    }
+    if (cleanExp.length !== 4) {
+      return res.status(400).json({ error: 'Invalid expiry date (use MM/YY)' });
+    }
+    if (!cvv || cvv.length < 3) {
+      return res.status(400).json({ error: 'Invalid CVV' });
+    }
+    
+    console.log('Processing Clearent CNP payment for order:', order_number, 'amount:', amount);
+    
+    // Call Clearent API
+    const clearentResponse = await fetch('https://gateway.clearent.net/rest/v2/transactions/sale', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Api-Key': apiKey
+      },
+      body: JSON.stringify({
+        type: 'SALE',
+        card: cleanCard,
+        'exp-date': cleanExp,
+        csc: cvv,
+        amount: parseFloat(amount).toFixed(2),
+        'software-type': 'KleenPanda POS',
+        'software-type-version': '1.0',
+        'invoice': order_number || req.params.id
+      })
+    });
+    
+    const clearentData = await clearentResponse.json();
+    console.log('Clearent response:', JSON.stringify(clearentData, null, 2));
+    
+    // Check response
+    if (clearentData.code === '200' || clearentData.payload?.transaction?.result === 'APPROVED') {
+      // Payment successful - update order
+      await pool.query(
+        'UPDATE orders SET payment_status = $1, payment_method = $2, updated_at = NOW() WHERE id = $3',
+        ['paid', 'card', req.params.id]
+      );
+      
+      res.json({ 
+        success: true, 
+        message: 'Payment approved!',
+        transaction_id: clearentData.payload?.transaction?.id,
+        last_four: cleanCard.slice(-4)
+      });
+    } else {
+      // Payment failed
+      const errorMsg = clearentData.payload?.error?.['error-message'] 
+        || clearentData.payload?.transaction?.['display-message']
+        || clearentData.message 
+        || 'Payment declined';
+      
+      console.log('Clearent payment failed:', errorMsg);
+      res.status(400).json({ error: errorMsg });
+    }
+  } catch (err) {
+    console.error('Clearent payment error:', err);
+    res.status(500).json({ error: 'Payment processing error: ' + err.message });
   }
 });
 
@@ -967,7 +1099,7 @@ app.get('/api/staff-productivity', authMiddleware, async (req, res) => {
     // Get orders processed by each staff member in date range
     let query = `
       SELECT 
-        COALESCE(received_by, created_by_name) as staff_name,
+        COALESCE(received_by, created_by_name, 'Unknown') as staff_name,
         COUNT(*) FILTER (WHERE received_by IS NOT NULL OR created_by_name IS NOT NULL) as orders_received,
         COUNT(*) FILTER (WHERE cleaned_by IS NOT NULL) as orders_cleaned,
         COUNT(*) FILTER (WHERE ready_by IS NOT NULL) as orders_ready,
@@ -976,6 +1108,7 @@ app.get('/api/staff-productivity', authMiddleware, async (req, res) => {
         array_agg(DISTINCT order_number) FILTER (WHERE received_by IS NOT NULL OR cleaned_by IS NOT NULL OR ready_by IS NOT NULL) as order_numbers
       FROM orders 
       WHERE DATE(created_at) BETWEEN $1 AND $2
+      AND (received_by IS NOT NULL OR created_by_name IS NOT NULL)
     `;
     
     const params = [startDate, endDate];
@@ -985,7 +1118,7 @@ app.get('/api/staff-productivity', authMiddleware, async (req, res) => {
       params.push(user_id);
     }
     
-    query += ' GROUP BY COALESCE(received_by, created_by_name)';
+    query += ' GROUP BY COALESCE(received_by, created_by_name, \'Unknown\') HAVING COALESCE(received_by, created_by_name, \'Unknown\') IS NOT NULL';
     
     const result = await pool.query(query, params);
     
@@ -993,8 +1126,10 @@ app.get('/api/staff-productivity', authMiddleware, async (req, res) => {
     const timeQuery = `
       SELECT user_name, 
         SUM(hours_worked) as total_hours,
-        SUM(machine_card_start - machine_card_end) as machine_card_usage,
-        COUNT(*) as shifts
+        SUM(COALESCE(machine_card_start, 0) - COALESCE(machine_card_end, 0)) as machine_card_usage,
+        COUNT(*) as shifts,
+        MIN(date) as first_shift,
+        MAX(date) as last_shift
       FROM time_entries 
       WHERE date BETWEEN $1 AND $2
       ${user_id ? 'AND user_id = $3' : ''}
@@ -1004,7 +1139,7 @@ app.get('/api/staff-productivity', authMiddleware, async (req, res) => {
     const timeResult = await pool.query(timeQuery, user_id ? [startDate, endDate, user_id] : [startDate, endDate]);
     
     res.json({
-      productivity: result.rows,
+      productivity: result.rows.filter(r => r.staff_name && r.staff_name !== 'null'),
       timeEntries: timeResult.rows
     });
   } catch (err) {
@@ -1052,7 +1187,7 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 // PUBLIC ROUTES - CUSTOMER
 app.post('/api/public/customer-login', async (req, res) => {
   try {
-    const { phone, password, name, email, address, sms_consent } = req.body;
+    const { phone, password, name, email, address, sms_consent, subscription_plan } = req.body;
     if (!phone) return res.status(400).json({ error: 'Phone number required' });
     
     // Clean phone number - remove all non-digits
@@ -1073,15 +1208,18 @@ app.post('/api/public/customer-login', async (req, res) => {
       if (!name) return res.status(400).json({ error: 'Name required for new customers. Please use the Register page.' });
       if (!password) return res.status(400).json({ error: 'Password required' });
       
-      console.log('Creating new customer:', name, cleanPhone);
+      // Set discount based on subscription plan
+      const discount = subscription_plan ? 14 : 0; // 14% discount for subscribers ($1.20 vs $1.40)
+      
+      console.log('Creating new customer:', name, cleanPhone, 'plan:', subscription_plan);
       const result = await pool.query(
-        'INSERT INTO customers (name, phone, email, address, password, sms_consent) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-        [name, cleanPhone, email || '', address || '', password, sms_consent || false]
+        'INSERT INTO customers (name, phone, email, address, password, sms_consent, subscription_plan, discount) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+        [name, cleanPhone, email || '', address || '', password, sms_consent || false, subscription_plan || null, discount]
       );
       const newCustomer = result.rows[0];
       console.log('Customer created with ID:', newCustomer.id);
       const token = jwt.sign({ customerId: newCustomer.id }, JWT_SECRET, { expiresIn: '30d' });
-      return res.json({ customer: { id: newCustomer.id, name: newCustomer.name, phone: newCustomer.phone, email: newCustomer.email, address: newCustomer.address, paymentMethods: [] }, token, isNew: true });
+      return res.json({ customer: { id: newCustomer.id, name: newCustomer.name, phone: newCustomer.phone, email: newCustomer.email, address: newCustomer.address, subscription_plan: newCustomer.subscription_plan, paymentMethods: [] }, token, isNew: true });
     }
     
     // Existing customer login
@@ -1098,7 +1236,7 @@ app.post('/api/public/customer-login', async (req, res) => {
     }
     
     const token = jwt.sign({ customerId: customer.id }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ customer: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address: customer.address, paymentMethods: customer.payment_methods || [] }, token, isNew: false });
+    res.json({ customer: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address: customer.address, subscription_plan: customer.subscription_plan, paymentMethods: customer.payment_methods || [] }, token, isNew: false });
   } catch (err) {
     console.error('Customer login error:', err);
     res.status(500).json({ error: 'Database error: ' + err.message });
@@ -1195,9 +1333,28 @@ app.get('/api/public/my-orders', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No token' });
     const decoded = jwt.verify(token, JWT_SECRET);
-    const result = await pool.query('SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC', [decoded.customerId]);
-    res.json(result.rows.map(o => ({...o, total: parseFloat(o.total)})));
+    
+    // Get customer info first
+    const customerResult = await pool.query('SELECT * FROM customers WHERE id = $1', [decoded.customerId]);
+    const customer = customerResult.rows[0];
+    
+    // Find orders by customer_id OR by phone number (to catch orders created before linking)
+    let result;
+    if (customer && customer.phone) {
+      const cleanPhone = customer.phone.replace(/\D/g, '');
+      result = await pool.query(
+        `SELECT * FROM orders WHERE customer_id = $1 
+         OR REPLACE(REPLACE(REPLACE(customer_phone, '-', ''), '(', ''), ')', '') LIKE '%' || $2 || '%'
+         ORDER BY created_at DESC`,
+        [decoded.customerId, cleanPhone.slice(-10)]
+      );
+    } else {
+      result = await pool.query('SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC', [decoded.customerId]);
+    }
+    
+    res.json(result.rows.map(o => ({...o, total: parseFloat(o.total || 0)})));
   } catch (err) {
+    console.error('My orders error:', err);
     res.status(401).json({ error: 'Invalid token' });
   }
 });
