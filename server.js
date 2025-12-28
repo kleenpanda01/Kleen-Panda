@@ -334,7 +334,8 @@ async function initDB() {
       { name: 'subscription_plan', type: 'VARCHAR(50)' },
       { name: 'card_last_four', type: 'VARCHAR(4)' },
       { name: 'card_token', type: 'TEXT' },
-      { name: 'zelle_id', type: 'VARCHAR(255)' }
+      { name: 'zelle_id', type: 'VARCHAR(255)' },
+      { name: 'notification_preference', type: "VARCHAR(10) DEFAULT 'sms'" }
     ];
     
     for (const col of customerColumns) {
@@ -989,15 +990,22 @@ app.get('/api/staff-summary', authMiddleware, adminOnly, async (req, res) => {
 // REPORTS
 app.get('/api/reports', authMiddleware, async (req, res) => {
   try {
-    const { period } = req.query;
-    let startDate, endDate = new Date();
+    const { start, end, period } = req.query;
+    let startDate, endDate;
     
-    if (period === 'today') {
+    if (start && end) {
+      startDate = new Date(start);
+      endDate = new Date(end);
+      endDate.setHours(23, 59, 59, 999);
+    } else if (period === 'today') {
       startDate = new Date(); startDate.setHours(0, 0, 0, 0);
+      endDate = new Date();
     } else if (period === 'this_week') {
       startDate = new Date(); startDate.setDate(startDate.getDate() - 7);
+      endDate = new Date();
     } else {
       startDate = new Date(); startDate.setMonth(startDate.getMonth() - 1);
+      endDate = new Date();
     }
     
     const result = await pool.query(
@@ -1006,7 +1014,10 @@ app.get('/api/reports', authMiddleware, async (req, res) => {
     );
     
     const topCustomers = await pool.query(
-      'SELECT customer_name as name, COUNT(*) as orders, SUM(total) as total FROM orders WHERE created_at BETWEEN $1 AND $2 AND customer_name IS NOT NULL GROUP BY customer_name ORDER BY total DESC LIMIT 10',
+      `SELECT customer_name as name, COUNT(*) as orders, SUM(total) as total 
+       FROM orders WHERE created_at BETWEEN $1 AND $2 
+       AND customer_name IS NOT NULL AND customer_name != ''
+       GROUP BY customer_name ORDER BY total DESC LIMIT 10`,
       [startDate, endDate]
     );
     
@@ -1014,7 +1025,8 @@ app.get('/api/reports', authMiddleware, async (req, res) => {
       totalOrders: parseInt(result.rows[0].orders),
       totalRevenue: parseFloat(result.rows[0].revenue),
       totalWeight: parseFloat(result.rows[0].weight),
-      topCustomers: topCustomers.rows.map(c => ({name: c.name, orders: parseInt(c.orders), total: parseFloat(c.total)}))
+      topCustomers: topCustomers.rows.map(c => ({name: c.name, orders: parseInt(c.orders), total: parseFloat(c.total)})),
+      dateRange: { start: startDate.toISOString().slice(0,10), end: endDate.toISOString().slice(0,10) }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1187,18 +1199,21 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 // PUBLIC ROUTES - CUSTOMER
 app.post('/api/public/customer-login', async (req, res) => {
   try {
-    const { phone, password, name, email, address, sms_consent, subscription_plan } = req.body;
+    const { phone, password, name, email, address, sms_consent, subscription_plan, notification_preference } = req.body;
     if (!phone) return res.status(400).json({ error: 'Phone number required' });
     
-    // Clean phone number - remove all non-digits
-    const cleanPhone = phone.replace(/\D/g, '');
+    // Clean phone number - remove all non-digits and get last 10 digits
+    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+    if (cleanPhone.length < 10) {
+      return res.status(400).json({ error: 'Please enter a valid 10-digit phone number' });
+    }
     console.log('Customer login attempt for phone:', cleanPhone);
     
-    // Get ALL customers and find match in JavaScript (more reliable)
+    // Get ALL customers and find exact match by last 10 digits
     const allCustomers = await pool.query('SELECT * FROM customers');
     const customer = allCustomers.rows.find(c => {
-      const dbPhone = (c.phone || '').replace(/\D/g, '');
-      return dbPhone === cleanPhone || dbPhone.endsWith(cleanPhone) || cleanPhone.endsWith(dbPhone);
+      const dbPhone = (c.phone || '').replace(/\D/g, '').slice(-10);
+      return dbPhone === cleanPhone;
     });
     
     console.log('Found customer:', customer ? customer.id : 'none');
@@ -1213,13 +1228,13 @@ app.post('/api/public/customer-login', async (req, res) => {
       
       console.log('Creating new customer:', name, cleanPhone, 'plan:', subscription_plan);
       const result = await pool.query(
-        'INSERT INTO customers (name, phone, email, address, password, sms_consent, subscription_plan, discount) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-        [name, cleanPhone, email || '', address || '', password, sms_consent || false, subscription_plan || null, discount]
+        'INSERT INTO customers (name, phone, email, address, password, sms_consent, subscription_plan, discount, notification_preference) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+        [name, cleanPhone, email || '', address || '', password, sms_consent || false, subscription_plan || null, discount, notification_preference || 'sms']
       );
       const newCustomer = result.rows[0];
       console.log('Customer created with ID:', newCustomer.id);
       const token = jwt.sign({ customerId: newCustomer.id }, JWT_SECRET, { expiresIn: '30d' });
-      return res.json({ customer: { id: newCustomer.id, name: newCustomer.name, phone: newCustomer.phone, email: newCustomer.email, address: newCustomer.address, subscription_plan: newCustomer.subscription_plan, paymentMethods: [] }, token, isNew: true });
+      return res.json({ customer: { id: newCustomer.id, name: newCustomer.name, phone: newCustomer.phone, email: newCustomer.email, address: newCustomer.address, subscription_plan: newCustomer.subscription_plan, notification_preference: newCustomer.notification_preference, paymentMethods: [] }, token, isNew: true });
     }
     
     // Existing customer login
@@ -1341,12 +1356,12 @@ app.get('/api/public/my-orders', async (req, res) => {
     // Find orders by customer_id OR by phone number (to catch orders created before linking)
     let result;
     if (customer && customer.phone) {
-      const cleanPhone = customer.phone.replace(/\D/g, '');
+      const cleanPhone = customer.phone.replace(/\D/g, '').slice(-10);
       result = await pool.query(
         `SELECT * FROM orders WHERE customer_id = $1 
          OR REPLACE(REPLACE(REPLACE(customer_phone, '-', ''), '(', ''), ')', '') LIKE '%' || $2 || '%'
          ORDER BY created_at DESC`,
-        [decoded.customerId, cleanPhone.slice(-10)]
+        [decoded.customerId, cleanPhone]
       );
     } else {
       result = await pool.query('SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC', [decoded.customerId]);
@@ -1356,6 +1371,78 @@ app.get('/api/public/my-orders', async (req, res) => {
   } catch (err) {
     console.error('My orders error:', err);
     res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+// Customer can edit notes on their order (before cleaned status)
+app.put('/api/public/orders/:id', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'No token' });
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    const { notes } = req.body;
+    
+    // Check order belongs to customer and is not yet cleaned
+    const orderCheck = await pool.query('SELECT * FROM orders WHERE id = $1', [req.params.id]);
+    const order = orderCheck.rows[0];
+    
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    
+    // Verify ownership (by customer_id or phone)
+    const customerResult = await pool.query('SELECT * FROM customers WHERE id = $1', [decoded.customerId]);
+    const customer = customerResult.rows[0];
+    const orderPhone = (order.customer_phone || '').replace(/\D/g, '').slice(-10);
+    const custPhone = (customer?.phone || '').replace(/\D/g, '').slice(-10);
+    
+    if (order.customer_id !== decoded.customerId && orderPhone !== custPhone) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    
+    // Only allow edit before cleaned
+    if (['cleaned', 'ready', 'delivered'].includes(order.status)) {
+      return res.status(400).json({ error: 'Order is already being processed and cannot be edited' });
+    }
+    
+    await pool.query('UPDATE orders SET notes = $1 WHERE id = $2', [notes, req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Customer can cancel their order (before cleaned status)
+app.post('/api/public/orders/:id/cancel', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'No token' });
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Check order belongs to customer and is not yet cleaned
+    const orderCheck = await pool.query('SELECT * FROM orders WHERE id = $1', [req.params.id]);
+    const order = orderCheck.rows[0];
+    
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    
+    // Verify ownership
+    const customerResult = await pool.query('SELECT * FROM customers WHERE id = $1', [decoded.customerId]);
+    const customer = customerResult.rows[0];
+    const orderPhone = (order.customer_phone || '').replace(/\D/g, '').slice(-10);
+    const custPhone = (customer?.phone || '').replace(/\D/g, '').slice(-10);
+    
+    if (order.customer_id !== decoded.customerId && orderPhone !== custPhone) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    
+    // Only allow cancel before cleaned
+    if (['cleaned', 'ready', 'delivered'].includes(order.status)) {
+      return res.status(400).json({ error: 'Order is already being processed and cannot be cancelled' });
+    }
+    
+    await pool.query('UPDATE orders SET status = $1 WHERE id = $2', ['cancelled', req.params.id]);
+    res.json({ success: true, message: 'Order cancelled' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
