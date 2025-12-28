@@ -1199,37 +1199,52 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 // PUBLIC ROUTES - CUSTOMER
 app.post('/api/public/customer-login', async (req, res) => {
   try {
-    const { phone, password, name, email, address, sms_consent, subscription_plan, notification_preference } = req.body;
-    if (!phone) return res.status(400).json({ error: 'Phone number required' });
+    const { phone, email, password, name, address, sms_consent, subscription_plan, notification_preference } = req.body;
+    if (!phone && !email) return res.status(400).json({ error: 'Phone number or email required' });
     
-    // Clean phone number - remove all non-digits and get last 10 digits
-    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
-    if (cleanPhone.length < 10) {
-      return res.status(400).json({ error: 'Please enter a valid 10-digit phone number' });
-    }
-    console.log('Customer login attempt for phone:', cleanPhone);
+    let customer = null;
+    let cleanPhone = null;
     
-    // Get ALL customers and find exact match by last 10 digits
+    // Get ALL customers for matching
     const allCustomers = await pool.query('SELECT * FROM customers');
-    const customer = allCustomers.rows.find(c => {
-      const dbPhone = (c.phone || '').replace(/\D/g, '').slice(-10);
-      return dbPhone === cleanPhone;
-    });
+    
+    if (phone) {
+      // Phone login - clean and match last 10 digits
+      cleanPhone = phone.replace(/\D/g, '').slice(-10);
+      if (cleanPhone.length < 10) {
+        return res.status(400).json({ error: 'Please enter a valid 10-digit phone number' });
+      }
+      console.log('Customer login attempt by phone:', cleanPhone);
+      customer = allCustomers.rows.find(c => {
+        const dbPhone = (c.phone || '').replace(/\D/g, '').slice(-10);
+        return dbPhone === cleanPhone;
+      });
+    } else if (email) {
+      // Email login - case insensitive match
+      console.log('Customer login attempt by email:', email);
+      customer = allCustomers.rows.find(c => 
+        c.email && c.email.toLowerCase() === email.toLowerCase()
+      );
+      if (!customer) {
+        return res.status(401).json({ error: 'No account found with this email. Try your phone number or register.' });
+      }
+    }
     
     console.log('Found customer:', customer ? customer.id : 'none');
     
     if (!customer) {
-      // New customer registration
+      // New customer registration (only via phone)
+      if (!phone) return res.status(400).json({ error: 'Phone number required to create account' });
       if (!name) return res.status(400).json({ error: 'Name required for new customers. Please use the Register page.' });
       if (!password) return res.status(400).json({ error: 'Password required' });
       
       // Set discount based on subscription plan
-      const discount = subscription_plan ? 14 : 0; // 14% discount for subscribers ($1.20 vs $1.40)
+      const discount = subscription_plan ? 14 : 0;
       
       console.log('Creating new customer:', name, cleanPhone, 'plan:', subscription_plan);
       const result = await pool.query(
         'INSERT INTO customers (name, phone, email, address, password, sms_consent, subscription_plan, discount, notification_preference) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
-        [name, cleanPhone, email || '', address || '', password, sms_consent || false, subscription_plan || null, discount, notification_preference || 'sms']
+        [name, cleanPhone, req.body.email || '', address || '', password, sms_consent || false, subscription_plan || null, discount, notification_preference || 'sms']
       );
       const newCustomer = result.rows[0];
       console.log('Customer created with ID:', newCustomer.id);
@@ -1242,7 +1257,7 @@ app.post('/api/public/customer-login', async (req, res) => {
     if (!password) return res.status(400).json({ error: 'Password required' });
     if (customer.password && customer.password !== password) {
       console.log('Password mismatch - entered:', password, 'stored:', customer.password);
-      return res.status(401).json({ error: 'Invalid password. Try again or contact support.' });
+      return res.status(401).json({ error: 'Invalid password. Try again or use Forgot Password.' });
     }
     // If customer has no password yet (legacy), set it
     if (!customer.password) {
