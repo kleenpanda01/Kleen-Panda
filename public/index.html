@@ -748,124 +748,68 @@ async function testPrint(){
 }
 
 function printReceipt(orderId){
-  const order = state.orders.find(o => o.id === orderId);
+  var order = state.orders.find(function(o){return o.id === orderId;});
   if(!order){toast('Order not found','error');return;}
   printReceiptWindow(order);
 }
 
 function printReceiptWindow(order){
-  const items = order.items || [];
-  const subtotal = items.reduce((s,i) => s + (i.price * i.quantity), 0);
-  const tax = parseFloat(order.total) - subtotal;
-  const date = new Date(order.created_at);
+  var items = order.items || [];
+  var subtotal = items.reduce(function(s,i){return s + (i.price * i.quantity);}, 0);
+  var tax = parseFloat(order.total) - subtotal;
+  var date = new Date(order.created_at);
+  var w = 48;
+  var line = '================================================';
+  var dash = '------------------------------------------------';
   
-  // Format for 80mm paper (48 characters width for Epson TM-T20II)
-  const w = 48;
-  const line = '='.repeat(w);
-  const dash = '-'.repeat(w);
+  function center(text){var pad = Math.max(0, Math.floor((w - text.length) / 2));return Array(pad+1).join(' ') + text;}
+  function leftRight(left, right){var space = w - left.length - right.length;return left + Array(Math.max(1, space)+1).join(' ') + right;}
   
-  const center = (text) => {
-    const pad = Math.max(0, Math.floor((w - text.length) / 2));
-    return ' '.repeat(pad) + text;
-  };
-  
-  const leftRight = (left, right) => {
-    const space = w - left.length - right.length;
-    return left + ' '.repeat(Math.max(1, space)) + right;
-  };
-  
-  let receipt = `
-${line}
-${center('KLEEN PANDA')}
-${center('Professional Laundry Service')}
-${line}
-${center('113 E Tremont Ave')}
-${center('Bronx, NY 10453')}
-${center('(347) 297-6088')}
-${center('info@kleenpanda.com')}
-${line}
+  var receipt = line + '\n' +
+    center('KLEEN PANDA') + '\n' +
+    center('Professional Laundry Service') + '\n' +
+    line + '\n' +
+    center('113 E Tremont Ave') + '\n' +
+    center('Bronx, NY 10453') + '\n' +
+    center('(347) 297-6088') + '\n' +
+    center('info@kleenpanda.com') + '\n' +
+    line + '\n\n' +
+    leftRight('Order:', order.order_number) + '\n' +
+    leftRight('Date:', date.toLocaleDateString()) + '\n' +
+    leftRight('Time:', date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})) + '\n' +
+    (order.customer_name ? leftRight('Customer:', order.customer_name) + '\n' : '') +
+    (order.customer_phone ? leftRight('Phone:', formatPhone(order.customer_phone)) + '\n' : '') +
+    '\n' + dash + '\nITEMS\n' + dash + '\n';
 
-${leftRight('Order:', order.order_number)}
-${leftRight('Date:', date.toLocaleDateString())}
-${leftRight('Time:', date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}))}
-${order.customer_name ? leftRight('Customer:', order.customer_name) : ''}
-${order.customer_phone ? leftRight('Phone:', formatPhone(order.customer_phone)) : ''}
-
-${dash}
-ITEMS
-${dash}
-`;
-
-  items.forEach(item => {
-    const name = item.service_name.substring(0, 28);
-    const qty = item.quantity.toString();
-    const price = formatCurrency(item.price * item.quantity);
+  items.forEach(function(item){
+    var name = item.service_name.substring(0, 28);
+    var qty = item.quantity.toString();
+    var price = formatCurrency(item.price * item.quantity);
     receipt += leftRight(name, '') + '\n';
     receipt += leftRight('  ' + qty + ' x ' + formatCurrency(item.price), price) + '\n';
   });
 
-  receipt += `
-${dash}
-${leftRight('Subtotal:', formatCurrency(subtotal))}
-${leftRight('Tax (8.875%):', formatCurrency(tax))}
-${line}
-${leftRight('TOTAL:', formatCurrency(order.total))}
-${line}
+  receipt += '\n' + dash + '\n' +
+    leftRight('Subtotal:', formatCurrency(subtotal)) + '\n' +
+    leftRight('Tax (8.875%):', formatCurrency(tax)) + '\n' +
+    line + '\n' +
+    leftRight('TOTAL:', formatCurrency(order.total)) + '\n' +
+    line + '\n\n' +
+    leftRight('Payment:', order.payment_status === 'paid' ? 'PAID' : 'UNPAID') + '\n' +
+    (order.payment_method ? leftRight('Method:', order.payment_method.toUpperCase()) + '\n' : '') +
+    '\n' + center('Thank you for choosing') + '\n' +
+    center('Kleen Panda!') + '\n\n' +
+    center('Questions? Call us at') + '\n' +
+    center('(347) 297-6088') + '\n\n' + line;
 
-${leftRight('Payment:', order.payment_status === 'paid' ? 'PAID' : 'UNPAID')}
-${order.payment_method ? leftRight('Method:', order.payment_method.toUpperCase()) : ''}
-
-${center('Thank you for choosing')}
-${center('Kleen Panda!')}
-
-${center('Questions? Call us at')}
-${center('(347) 297-6088')}
-
-${line}
-`;
-
-  // Open print window
-  const printWindow = window.open('', '_blank', 'width=400,height=600');
-  printWindow.document.write(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Receipt - ${order.order_number}</title>
-  <style>
-    @page { 
-      size: 80mm auto;
-      margin: 0;
-    }
-    body { 
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 12px;
-      line-height: 1.2;
-      margin: 0;
-      padding: 5mm;
-      width: 80mm;
-      box-sizing: border-box;
-    }
-    pre {
-      margin: 0;
-      white-space: pre-wrap;
-      word-wrap: break-word;
-    }
-    @media print {
-      body { padding: 0; }
-    }
-  </style>
-</head>
-<body>
-<pre>${receipt}</pre>
-<script>
-  window.onload = function() {
-    window.print();
-    setTimeout(function() { window.close(); }, 500);
-  };
-</script>
-</body>
-</html>
-  `);
+  var printWindow = window.open('', '_blank', 'width=400,height=600');
+  printWindow.document.write(
+    '<!DOCTYPE html><html><head><title>Receipt - ' + order.order_number + '</title>' +
+    '<style>@page{size:80mm auto;margin:0}body{font-family:Courier New,Courier,monospace;font-size:12px;line-height:1.2;margin:0;padding:5mm;width:80mm;box-sizing:border-box}pre{margin:0;white-space:pre-wrap;word-wrap:break-word}@media print{body{padding:0}}</style>' +
+    '</head><body><pre>' + receipt + '</pre>' +
+    '<script>window.onload=function(){window.print();setTimeout(function(){window.close();},500)};<\/script>' +
+    '</body></html>'
+  );
   printWindow.document.close();
 }
 async function checkClearentStatus(){try{const s=await api('/payments/clearent/status');const el=document.getElementById('clearent-status');if(el)el.innerHTML=s.configured?'<span style="color:var(--kp-green)">✅ Terminal connected</span>':'<span style="color:var(--kp-red)">⚠️ Not configured</span>';}catch{}}
