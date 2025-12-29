@@ -990,7 +990,7 @@ app.get('/api/staff-summary', authMiddleware, adminOnly, async (req, res) => {
 // REPORTS
 app.get('/api/reports', authMiddleware, async (req, res) => {
   try {
-    const { start, end, period } = req.query;
+    const { start, end, period, compare } = req.query;
     let startDate, endDate;
     
     if (start && end) {
@@ -1008,11 +1008,50 @@ app.get('/api/reports', authMiddleware, async (req, res) => {
       endDate = new Date();
     }
     
+    // Calculate prior period dates
+    const periodLength = endDate - startDate;
+    let priorStartDate, priorEndDate;
+    
+    if (compare === 'prior_year') {
+      priorStartDate = new Date(startDate);
+      priorStartDate.setFullYear(priorStartDate.getFullYear() - 1);
+      priorEndDate = new Date(endDate);
+      priorEndDate.setFullYear(priorEndDate.getFullYear() - 1);
+    } else {
+      // Prior period (same length, immediately before)
+      priorEndDate = new Date(startDate.getTime() - 1);
+      priorStartDate = new Date(priorEndDate.getTime() - periodLength);
+    }
+    
+    // Current period totals
     const result = await pool.query(
       'SELECT COUNT(*) as orders, COALESCE(SUM(total), 0) as revenue, COALESCE(SUM(weight), 0) as weight FROM orders WHERE created_at BETWEEN $1 AND $2',
       [startDate, endDate]
     );
     
+    // Prior period totals
+    const priorResult = await pool.query(
+      'SELECT COUNT(*) as orders, COALESCE(SUM(total), 0) as revenue, COALESCE(SUM(weight), 0) as weight FROM orders WHERE created_at BETWEEN $1 AND $2',
+      [priorStartDate, priorEndDate]
+    );
+    
+    // Daily data for charts (current period)
+    const dailyData = await pool.query(
+      `SELECT DATE(created_at) as date, COUNT(*) as orders, COALESCE(SUM(total), 0) as revenue 
+       FROM orders WHERE created_at BETWEEN $1 AND $2 
+       GROUP BY DATE(created_at) ORDER BY date`,
+      [startDate, endDate]
+    );
+    
+    // Daily data for prior period
+    const priorDailyData = await pool.query(
+      `SELECT DATE(created_at) as date, COUNT(*) as orders, COALESCE(SUM(total), 0) as revenue 
+       FROM orders WHERE created_at BETWEEN $1 AND $2 
+       GROUP BY DATE(created_at) ORDER BY date`,
+      [priorStartDate, priorEndDate]
+    );
+    
+    // Top customers
     const topCustomers = await pool.query(
       `SELECT customer_name as name, COUNT(*) as orders, SUM(total) as total 
        FROM orders WHERE created_at BETWEEN $1 AND $2 
@@ -1025,8 +1064,14 @@ app.get('/api/reports', authMiddleware, async (req, res) => {
       totalOrders: parseInt(result.rows[0].orders),
       totalRevenue: parseFloat(result.rows[0].revenue),
       totalWeight: parseFloat(result.rows[0].weight),
+      priorOrders: parseInt(priorResult.rows[0].orders),
+      priorRevenue: parseFloat(priorResult.rows[0].revenue),
+      priorWeight: parseFloat(priorResult.rows[0].weight),
+      dailyData: dailyData.rows.map(d => ({ date: new Date(d.date).toLocaleDateString('en-US', {month:'short',day:'numeric'}), orders: parseInt(d.orders), revenue: parseFloat(d.revenue) })),
+      priorDailyData: priorDailyData.rows.map(d => ({ date: new Date(d.date).toLocaleDateString('en-US', {month:'short',day:'numeric'}), orders: parseInt(d.orders), revenue: parseFloat(d.revenue) })),
       topCustomers: topCustomers.rows.map(c => ({name: c.name, orders: parseInt(c.orders), total: parseFloat(c.total)})),
-      dateRange: { start: startDate.toISOString().slice(0,10), end: endDate.toISOString().slice(0,10) }
+      dateRange: { start: startDate.toISOString().slice(0,10), end: endDate.toISOString().slice(0,10) },
+      priorDateRange: { start: priorStartDate.toISOString().slice(0,10), end: priorEndDate.toISOString().slice(0,10) }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
