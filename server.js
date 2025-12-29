@@ -412,6 +412,9 @@ async function initDB() {
       `);
     }
     
+    // Always ensure services sequence is correct (fixes duplicate key errors)
+    await client.query("SELECT setval('services_id_seq', COALESCE((SELECT MAX(id) FROM services), 1))");
+    
     console.log('Database initialized successfully');
   } catch (err) {
     console.error('Database initialization error:', err);
