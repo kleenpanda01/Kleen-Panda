@@ -494,7 +494,7 @@ app.post('/api/services', authMiddleware, adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'Name, category, and price are required' });
     }
     const result = await pool.query(
-      'INSERT INTO services (name, category, price, unit, description, active) VALUES ($1, $2, $3, $4, $5, true) RETURNING *',
+      'INSERT INTO services (name, category, price, unit, description, active) VALUES ($1, $2, $3, $4, $5, 1) RETURNING *',
       [name, category, price, unit || 'item', description || '']
     );
     res.json(result.rows[0]);
