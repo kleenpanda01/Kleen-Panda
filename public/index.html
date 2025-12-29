@@ -168,7 +168,7 @@ const renderCustomerModal=()=>'<div class="modal-overlay" onclick="closeModal()"
 
 const renderOrders=()=>'<div class="dashboard-layout">'+renderSidebar()+'<main class="main-content"><div class="page-header"><h1>'+t('orders')+'</h1></div><div class="card"><div id="orders-table"></div></div></main></div>'+(state.modal==='order-detail'?renderOrderModal():'')+(state.modal==='edit-order'?renderEditOrderModal():'')+(state.modal==='payment'?renderPaymentModal():'');
 
-const renderOrderModal=()=>{const o=state.selectedOrder;if(!o)return'';const st=['received','cleaned','ready','delivered'],ci=st.indexOf(o.status);return'<div class="modal-overlay" onclick="closeModal()"><div class="modal" style="max-width:500px" onclick="event.stopPropagation()"><div class="modal-header"><h3>'+o.order_number+'</h3><button class="modal-close" onclick="closeModal()">×</button></div><div style="display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">'+st.map((s,i)=>'<button class="btn btn-sm '+(i<=ci?'btn-success':'btn-outline')+'" onclick="updateOrderStatus('+o.id+',\''+s+'\')">'+s+'</button>').join('')+'</div><div style="background:var(--kp-cream);padding:1rem;border-radius:8px;margin-bottom:1rem"><p><strong>Customer:</strong> '+(o.customer_name||'Walk-in')+'</p><p><strong>Phone:</strong> '+formatPhone(o.customer_phone)+'</p><p><strong>Type:</strong> '+(o.order_type||'counter')+'</p><p><strong>Total:</strong> '+formatCurrency(o.total)+'</p><p><strong>Payment:</strong> <span class="badge badge-'+(o.payment_status==='paid'?'ready':'received')+'">'+(o.payment_status||'unpaid')+'</span> '+(o.payment_method?'('+o.payment_method+')':'')+'</p>'+(o.delivery_photo?'<button class="btn btn-outline btn-sm" onclick="viewDeliveryPhoto(\''+o.delivery_photo+'\')">📸 View Delivery Photo</button>':'')+'</div>'+(o.payment_status!=='paid'?'<div style="margin-bottom:1rem"><button class="btn btn-success" style="width:100%" onclick="showPaymentModal('+o.id+','+o.total+')">💳 Collect Payment - '+formatCurrency(o.total)+'</button></div>':'')+'<div style="display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn btn-outline" style="flex:1" onclick="editOrder('+o.id+')">✏️ '+t('edit')+'</button>'+(isAdmin()?'<button class="btn btn-danger" onclick="deleteOrder('+o.id+')">🗑️ '+t('delete')+'</button>':'')+'<button class="btn btn-primary" style="flex:1" onclick="closeModal()">Close</button></div></div></div>';};
+const renderOrderModal=()=>{const o=state.selectedOrder;if(!o)return'';const st=['received','cleaned','ready','delivered'],ci=st.indexOf(o.status);return'<div class="modal-overlay" onclick="closeModal()"><div class="modal" style="max-width:500px" onclick="event.stopPropagation()"><div class="modal-header"><h3>'+o.order_number+'</h3><button class="modal-close" onclick="closeModal()">×</button></div><div style="display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">'+st.map((s,i)=>'<button class="btn btn-sm '+(i<=ci?'btn-success':'btn-outline')+'" onclick="updateOrderStatus('+o.id+',\''+s+'\')">'+s+'</button>').join('')+'</div><div style="background:var(--kp-cream);padding:1rem;border-radius:8px;margin-bottom:1rem"><p><strong>Customer:</strong> '+(o.customer_name||'Walk-in')+'</p><p><strong>Phone:</strong> '+formatPhone(o.customer_phone)+'</p><p><strong>Type:</strong> '+(o.order_type||'counter')+'</p><p><strong>Total:</strong> '+formatCurrency(o.total)+'</p><p><strong>Payment:</strong> <span class="badge badge-'+(o.payment_status==='paid'?'ready':'received')+'">'+(o.payment_status||'unpaid')+'</span> '+(o.payment_method?'('+o.payment_method+')':'')+'</p>'+(o.delivery_photo?'<button class="btn btn-outline btn-sm" onclick="viewDeliveryPhoto(\''+o.delivery_photo+'\')">📸 View Delivery Photo</button>':'')+'</div>'+(o.payment_status!=='paid'?'<div style="margin-bottom:1rem"><button class="btn btn-success" style="width:100%" onclick="showPaymentModal('+o.id+','+o.total+')">💳 Collect Payment - '+formatCurrency(o.total)+'</button></div>':'')+'<div style="display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn btn-outline" onclick="printReceipt('+o.id+')">🖨️ Print</button><button class="btn btn-outline" style="flex:1" onclick="editOrder('+o.id+')">✏️ '+t('edit')+'</button>'+(isAdmin()?'<button class="btn btn-danger" onclick="deleteOrder('+o.id+')">🗑️ '+t('delete')+'</button>':'')+'<button class="btn btn-primary" style="flex:1" onclick="closeModal()">Close</button></div></div></div>';};
 
 const renderPaymentModal=()=>'<div class="modal-overlay" onclick="closeModal()"><div class="modal" style="max-width:450px" onclick="event.stopPropagation()"><div class="modal-header"><h3>💳 Collect Payment</h3><button class="modal-close" onclick="closeModal()">×</button></div><div style="text-align:center;margin-bottom:1rem"><div style="font-size:2rem;font-weight:700;color:var(--kp-teal)">'+formatCurrency(state.paymentAmount)+'</div></div><div class="form-group"><label class="form-label">Payment Method</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem"><button type="button" class="btn '+(state.collectPaymentMethod==='cash'?'btn-primary':'btn-outline')+'" onclick="state.collectPaymentMethod=\'cash\';render()">💵 Cash</button><button type="button" class="btn '+(state.collectPaymentMethod==='card'?'btn-primary':'btn-outline')+'" onclick="state.collectPaymentMethod=\'card\';render()">💳 Card</button><button type="button" class="btn '+(state.collectPaymentMethod==='terminal'?'btn-primary':'btn-outline')+'" onclick="state.collectPaymentMethod=\'terminal\';render()">🔌 Terminal</button><button type="button" class="btn '+(state.collectPaymentMethod==='zelle'?'btn-primary':'btn-outline')+'" onclick="state.collectPaymentMethod=\'zelle\';render()">📱 Zelle</button></div></div>'+(state.collectPaymentMethod==='card'?'<div style="background:var(--kp-cream);padding:1rem;border-radius:8px;margin-top:1rem"><p style="font-size:.9rem;color:var(--kp-teal);margin-bottom:.5rem;font-weight:600">💳 Enter customer card details:</p><div class="form-group"><label class="form-label">Card Number</label><input type="text" id="pay-card-number" maxlength="19" placeholder="1234 5678 9012 3456" oninput="formatCardNumber(this)"></div><div class="form-row"><div class="form-group"><label class="form-label">Expiry</label><input type="text" id="pay-card-expiry" maxlength="5" placeholder="MM/YY" oninput="formatExpiry(this)"></div><div class="form-group"><label class="form-label">CVV</label><input type="password" id="pay-card-cvv" maxlength="4" placeholder="•••"></div></div><p style="font-size:.8rem;color:var(--kp-green);margin-top:.5rem">✓ Card will be charged '+formatCurrency(state.paymentAmount)+' via Clearent</p></div>':'')+(state.collectPaymentMethod==='zelle'?'<div style="background:var(--kp-cream);padding:1rem;border-radius:8px;margin-top:1rem;text-align:center"><p style="font-weight:600">Send Zelle to:</p><p style="font-size:1.2rem;color:var(--kp-teal)">'+(state.settings?.zelle_id||'info@kleenpanda.com')+'</p><p style="font-size:.9rem;color:var(--kp-gray);margin-top:.5rem">Confirm payment received before marking paid</p></div>':'')+(state.collectPaymentMethod==='terminal'?'<div style="background:var(--kp-cream);padding:1rem;border-radius:8px;margin-top:1rem;text-align:center"><p>🔌 Swipe/insert card on terminal</p><p style="font-size:.9rem;color:var(--kp-gray)">Payment will be processed automatically</p></div>':'')+(state.collectPaymentMethod==='cash'?'<div style="background:var(--kp-cream);padding:1rem;border-radius:8px;margin-top:1rem;text-align:center"><p style="font-size:1.5rem">💵</p><p>Collect '+formatCurrency(state.paymentAmount)+' cash from customer</p></div>':'')+'<div style="display:flex;gap:.5rem;margin-top:1rem"><button type="button" class="btn btn-outline" style="flex:1" onclick="state.modal=\'order-detail\';render()">Cancel</button><button type="button" class="btn btn-success" style="flex:1" onclick="processPayment()">'+(state.collectPaymentMethod==='card'?'💳 Charge Card':'✓ Mark Paid')+'</button></div></div></div>';
 
@@ -180,9 +180,11 @@ const renderStaff=()=>{const today=new Date().toISOString().slice(0,10);const we
 
 const renderReports=()=>{const today=new Date().toISOString().slice(0,10);const weekAgo=new Date(Date.now()-7*24*60*60*1000).toISOString().slice(0,10);return'<div class="dashboard-layout">'+renderSidebar()+'<main class="main-content"><div class="page-header"><h1>'+t('reports')+'</h1></div><div class="card" style="margin-bottom:1rem"><div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:end"><div class="form-group" style="margin:0"><label class="form-label">Start Date</label><input type="date" id="report-start" value="'+(state.reportStartDate||weekAgo)+'" onchange="state.reportStartDate=this.value"></div><div class="form-group" style="margin:0"><label class="form-label">End Date</label><input type="date" id="report-end" value="'+(state.reportEndDate||today)+'" onchange="state.reportEndDate=this.value"></div><div class="form-group" style="margin:0"><label class="form-label">Compare To</label><select id="report-compare" onchange="state.reportCompare=this.value"><option value="prior_period">Prior Period</option><option value="prior_year">Same Period Last Year</option></select></div><button class="btn btn-primary" onclick="loadReportsWithDates()">🔍 Generate Report</button></div></div><div id="report-stats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1rem"></div><div class="card" style="margin-bottom:1rem"><h3>📈 Sales Trend</h3><canvas id="sales-chart" height="200"></canvas></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem"><div class="card"><h3>💰 Revenue Comparison</h3><canvas id="revenue-chart" height="180"></canvas></div><div class="card"><h3>📦 Orders Comparison</h3><canvas id="orders-chart" height="180"></canvas></div></div><div class="card"><h3>🏆 Top 10 Customers</h3><div id="top-customers"></div></div></main></div>';}
 
-const renderServicesAdmin=()=>'<div class="dashboard-layout">'+renderSidebar()+'<main class="main-content"><div class="page-header"><h1>Services</h1></div><div class="card" id="services-admin-list"></div></main></div>';
+const renderServicesAdmin=()=>'<div class="dashboard-layout">'+renderSidebar()+'<main class="main-content"><div class="page-header" style="display:flex;justify-content:space-between;align-items:center"><h1>Services</h1><button class="btn btn-primary" onclick="state.modal=\'add-service\';render()">+ Add Service</button></div><div class="card" id="services-admin-list"></div></main></div>'+(state.modal==='add-service'?renderAddServiceModal():'');
 
-const renderSettings=()=>'<div class="dashboard-layout">'+renderSidebar()+'<main class="main-content"><div class="page-header"><h1>'+t('settings')+'</h1></div><div class="card" style="margin-bottom:1rem"><h3>📧 Notifications & Payment</h3><div class="form-group"><label class="form-label">Order Confirmation Email</label><input type="email" id="set-notification-email" placeholder="sales@kleenpanda.com"></div><div class="form-group"><label class="form-label">Zelle ID (Email or Phone)</label><input type="text" id="set-zelle-id" placeholder="info@kleenpanda.com"></div><div class="form-group"><label class="form-label">Tax Rate (%)</label><input type="number" id="set-tax-rate" step="0.001" min="0" max="100" placeholder="8.875"></div><button class="btn btn-primary" onclick="saveNotificationSettings()">Save Settings</button></div><div class="card" style="margin-bottom:1rem"><h3>Delivery Schedule</h3><div class="form-group"><label class="form-label">Delivery Days</label><input type="text" id="set-delivery-days" placeholder="Monday,Friday"></div><div class="form-row"><div class="form-group"><label class="form-label">Start</label><input type="time" id="set-pickup-start"></div><div class="form-group"><label class="form-label">End</label><input type="time" id="set-pickup-end"></div></div><button class="btn btn-primary" onclick="saveDeliverySettings()">Save Schedule</button></div><div class="card" style="margin-bottom:1rem"><h3>💳 Clearent Payment Processing</h3><p style="color:var(--kp-gray);margin-bottom:1rem;font-size:.9rem">Process card payments via terminal swipe OR manual card entry. API Key is required for both.</p><div class="form-group"><label class="form-label">API Key <span style="color:var(--kp-green)">'+(state.settings?.clearent_api_key?'✓ Configured':'')+'</span></label><input type="password" id="set-clearent-api" placeholder="Your Clearent API Key"></div><div class="form-group"><label class="form-label">Terminal ID (optional - for physical terminal)</label><input type="text" id="set-clearent-terminal" placeholder="Terminal ID from Clearent"></div><button class="btn btn-primary" onclick="saveClearentSettings()">Save Clearent Settings</button><div id="clearent-status" style="margin-top:.5rem"></div></div><div class="card" style="margin-bottom:1rem"><h3>Users</h3><div id="users-list"></div><button class="btn btn-outline" style="margin-top:1rem" onclick="state.modal=\'add-user\';render()">+ Add</button></div><div class="card" style="border:2px solid var(--kp-red)"><h3 style="color:var(--kp-red)">⚠️ Danger Zone</h3><p style="color:var(--kp-gray);margin-bottom:1rem">These actions cannot be undone. Use with caution.</p><button class="btn btn-danger" onclick="deleteAllOrders()">🗑️ Delete All Orders</button></div></main></div>'+(state.modal==='add-user'?'<div class="modal-overlay" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><h3>Add User</h3><form onsubmit="addUser(event)"><div class="form-group"><label class="form-label">Name</label><input type="text" id="new-user-name" required></div><div class="form-group"><label class="form-label">Username</label><input type="text" id="new-user-username" required></div><div class="form-group"><label class="form-label">Password</label><input type="text" id="new-user-password" required></div><div class="form-group"><label class="form-label">Role</label><select id="new-user-role"><option value="staff">Staff</option><option value="driver">Driver</option></select></div><button type="submit" class="btn btn-primary" style="width:100%">Add</button></form></div></div>':'')+(state.modal==='edit-user'&&state.editingUser?'<div class="modal-overlay" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><h3>Edit '+state.editingUser.name+'</h3><form onsubmit="updateUser(event)"><div class="form-group"><label class="form-label">Name</label><input type="text" id="edit-user-name" value="'+state.editingUser.name+'" required></div><div class="form-group"><label class="form-label">Username</label><input type="text" id="edit-user-username" value="'+state.editingUser.username+'" required></div><div class="form-group"><label class="form-label">Password (blank=keep)</label><input type="text" id="edit-user-password"></div><div class="form-group"><label class="form-label">Role</label><select id="edit-user-role"><option value="staff" '+(state.editingUser.role==='staff'?'selected':'')+'>Staff</option><option value="driver" '+(state.editingUser.role==='driver'?'selected':'')+'>Driver</option><option value="admin" '+(state.editingUser.role==='admin'?'selected':'')+'>Admin</option></select></div><button type="submit" class="btn btn-primary" style="width:100%">Save</button></form></div></div>':'');
+const renderAddServiceModal=()=>'<div class="modal-overlay" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><div class="modal-header"><h3>Add New Service</h3><button class="modal-close" onclick="closeModal()">×</button></div><form onsubmit="addService(event)"><div class="form-group"><label class="form-label">Service Name *</label><input type="text" id="new-service-name" required placeholder="e.g. Carpet Cleaning - Small"></div><div class="form-group"><label class="form-label">Category *</label><select id="new-service-category" required><option value="Wash & Fold">Wash & Fold</option><option value="Dry Cleaning">Dry Cleaning</option><option value="Alterations">Alterations</option><option value="Specialty">Specialty</option><option value="Other">Other</option></select></div><div class="form-group"><label class="form-label">Price ($) *</label><input type="number" id="new-service-price" step="0.01" min="0" required placeholder="25.00"></div><div class="form-group"><label class="form-label">Unit</label><select id="new-service-unit"><option value="item">Per Item</option><option value="lb">Per Pound</option><option value="sqft">Per Sq Ft</option></select></div><div style="display:flex;gap:.5rem"><button type="button" class="btn btn-outline" style="flex:1" onclick="closeModal()">Cancel</button><button type="submit" class="btn btn-success" style="flex:1">Add Service</button></div></form></div></div>';
+
+const renderSettings=()=>'<div class="dashboard-layout">'+renderSidebar()+'<main class="main-content"><div class="page-header"><h1>'+t('settings')+'</h1></div><div class="card" style="margin-bottom:1rem"><h3>📧 Notifications & Payment</h3><div class="form-group"><label class="form-label">Order Confirmation Email</label><input type="email" id="set-notification-email" placeholder="sales@kleenpanda.com"></div><div class="form-group"><label class="form-label">Zelle ID (Email or Phone)</label><input type="text" id="set-zelle-id" placeholder="info@kleenpanda.com"></div><div class="form-group"><label class="form-label">Tax Rate (%)</label><input type="number" id="set-tax-rate" step="0.001" min="0" max="100" placeholder="8.875"></div><button class="btn btn-primary" onclick="saveNotificationSettings()">Save Settings</button></div><div class="card" style="margin-bottom:1rem"><h3>Delivery Schedule</h3><div class="form-group"><label class="form-label">Delivery Days</label><input type="text" id="set-delivery-days" placeholder="Monday,Friday"></div><div class="form-row"><div class="form-group"><label class="form-label">Start</label><input type="time" id="set-pickup-start"></div><div class="form-group"><label class="form-label">End</label><input type="time" id="set-pickup-end"></div></div><button class="btn btn-primary" onclick="saveDeliverySettings()">Save Schedule</button></div><div class="card" style="margin-bottom:1rem"><h3>🖨️ Receipt Printer</h3><p style="color:var(--kp-gray);margin-bottom:1rem;font-size:.9rem">Configure your receipt printer. For <strong>Epson TM-T20II</strong>: Connect via USB and set as default printer in Windows/Mac.</p><div class="form-group"><label class="form-label">Printer Type</label><select id="set-printer-type"><option value="">Select printer...</option><option value="epson" '+(state.settings?.printer_type==='epson'?'selected':'')+'>Epson TM-T20II / TM Series</option><option value="star" '+(state.settings?.printer_type==='star'?'selected':'')+'>Star Micronics</option><option value="zebra" '+(state.settings?.printer_type==='zebra'?'selected':'')+'>Zebra</option><option value="brother" '+(state.settings?.printer_type==='brother'?'selected':'')+'>Brother</option><option value="other" '+(state.settings?.printer_type==='other'?'selected':'')+'>Other ESC/POS</option></select></div><div class="form-group"><label class="form-label">Connection Type</label><select id="set-printer-connection"><option value="usb" '+(state.settings?.printer_connection==='usb'?'selected':'')+'>USB (Recommended)</option><option value="network" '+(state.settings?.printer_connection==='network'?'selected':'')+'>Network (IP)</option><option value="bluetooth" '+(state.settings?.printer_connection==='bluetooth'?'selected':'')+'>Bluetooth</option></select></div><div class="form-group"><label class="form-label">Paper Width</label><select id="set-printer-width"><option value="80" '+(state.settings?.printer_width==='80'||!state.settings?.printer_width?'selected':'')+'>80mm (Standard - TM-T20II)</option><option value="58" '+(state.settings?.printer_width==='58'?'selected':'')+'>58mm (Narrow)</option></select></div><div class="form-group"><label style="display:flex;align-items:center;gap:.5rem;cursor:pointer"><input type="checkbox" id="set-auto-print" '+(state.settings?.auto_print==='true'?'checked':'')+' style="width:auto"> Auto-print receipt after each order</label></div><div style="display:flex;gap:.5rem"><button class="btn btn-primary" onclick="savePrinterSettings()">Save Printer Settings</button><button class="btn btn-outline" onclick="testPrint()">🖨️ Test Print</button></div><div id="printer-status" style="margin-top:.5rem"></div><div style="margin-top:1rem;padding:1rem;background:var(--kp-cream);border-radius:8px;font-size:.85rem"><strong>Setup Instructions for Epson TM-T20II:</strong><ol style="margin:.5rem 0 0 1.5rem;padding:0"><li>Connect printer via USB to your computer</li><li>Install <a href="https://epson.com/Support/Point-of-Sale/TM-Series/Epson-TM-T20II/s/SPT_C31CD52062" target="_blank" style="color:var(--kp-teal)">Epson drivers</a> if not auto-detected</li><li>Set as default printer in Windows/Mac settings</li><li>Click "Test Print" above to verify</li></ol></div></div><div class="card" style="margin-bottom:1rem"><h3>💳 Clearent Payment Processing</h3><p style="color:var(--kp-gray);margin-bottom:1rem;font-size:.9rem">Process card payments via terminal swipe OR manual card entry. API Key is required for both.</p><div class="form-group"><label class="form-label">API Key <span style="color:var(--kp-green)">'+(state.settings?.clearent_api_key?'✓ Configured':'')+'</span></label><input type="password" id="set-clearent-api" placeholder="Your Clearent API Key"></div><div class="form-group"><label class="form-label">Terminal ID (optional - for physical terminal)</label><input type="text" id="set-clearent-terminal" placeholder="Terminal ID from Clearent"></div><button class="btn btn-primary" onclick="saveClearentSettings()">Save Clearent Settings</button><div id="clearent-status" style="margin-top:.5rem"></div></div><div class="card" style="margin-bottom:1rem"><h3>Users</h3><div id="users-list"></div><button class="btn btn-outline" style="margin-top:1rem" onclick="state.modal=\'add-user\';render()">+ Add</button></div><div class="card" style="border:2px solid var(--kp-red)"><h3 style="color:var(--kp-red)">⚠️ Danger Zone</h3><p style="color:var(--kp-gray);margin-bottom:1rem">These actions cannot be undone. Use with caution.</p><button class="btn btn-danger" onclick="deleteAllOrders()">🗑️ Delete All Orders</button></div></main></div>'+(state.modal==='add-user'?'<div class="modal-overlay" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><h3>Add User</h3><form onsubmit="addUser(event)"><div class="form-group"><label class="form-label">Name</label><input type="text" id="new-user-name" required></div><div class="form-group"><label class="form-label">Username</label><input type="text" id="new-user-username" required></div><div class="form-group"><label class="form-label">Password</label><input type="text" id="new-user-password" required></div><div class="form-group"><label class="form-label">Role</label><select id="new-user-role"><option value="staff">Staff</option><option value="driver">Driver</option></select></div><button type="submit" class="btn btn-primary" style="width:100%">Add</button></form></div></div>':'')+(state.modal==='edit-user'&&state.editingUser?'<div class="modal-overlay" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><h3>Edit '+state.editingUser.name+'</h3><form onsubmit="updateUser(event)"><div class="form-group"><label class="form-label">Name</label><input type="text" id="edit-user-name" value="'+state.editingUser.name+'" required></div><div class="form-group"><label class="form-label">Username</label><input type="text" id="edit-user-username" value="'+state.editingUser.username+'" required></div><div class="form-group"><label class="form-label">Password (blank=keep)</label><input type="text" id="edit-user-password"></div><div class="form-group"><label class="form-label">Role</label><select id="edit-user-role"><option value="staff" '+(state.editingUser.role==='staff'?'selected':'')+'>Staff</option><option value="driver" '+(state.editingUser.role==='driver'?'selected':'')+'>Driver</option><option value="admin" '+(state.editingUser.role==='admin'?'selected':'')+'>Admin</option></select></div><button type="submit" class="btn btn-primary" style="width:100%">Save</button></form></div></div>':'');
 
 // AUTH
 async function handleLogin(e){e.preventDefault();const id=document.getElementById('login-id').value.trim();const pw=document.getElementById('login-password').value;const digits=id.replace(/\D/g,'');const isPhone=digits.length>=10;const isEmail=id.includes('@');
@@ -539,7 +541,11 @@ async function submitOrder(){
     const o=await api('/orders',{method:'POST',body:{customer_id:state.selectedCustomer?.id,customer_name:state.selectedCustomer?.name,customer_phone:state.selectedCustomer?.phone,customer_address:state.selectedCustomer?.address||'',order_type:orderType,items:state.cart.map(c=>({service_id:c.id,service_name:c.name,quantity:c.quantity,price:c.price})),payment_method:state.paymentMethod==='terminal'?'card':state.paymentMethod,weight:w,adjustment:state.adjustment,discount:state.selectedCustomer?.discount||0}});
     if(state.paymentMethod==='terminal'){const paid=await processCardPayment(o.id,total,o.order_number);if(!paid){toast('Order created but payment pending','error');}}
     else if(['cash','card'].includes(state.paymentMethod)){await api('/orders/'+o.id+'/payment',{method:'PUT',body:{payment_status:'paid',payment_method:state.paymentMethod}});}
-    toast('Order '+o.order_number+' created!');clearCart();state.orderType='walk-in';
+    toast('Order '+o.order_number+' created!');
+    // Print receipt if auto-print enabled or ask user
+    if(state.settings?.auto_print==='true'){printReceiptWindow(o);}
+    else if(confirm('Order created! Print receipt?')){printReceiptWindow(o);}
+    clearCart();state.orderType='walk-in';
   }catch(e){toast(e.message,'error');}
 }
 function viewOrder(id){state.selectedOrder=state.orders.find(o=>o.id===id);state.modal='order-detail';render();}
@@ -674,6 +680,7 @@ function renderExpensesList(expenses){const el=document.getElementById('expenses
 // SERVICES
 async function updateServicePrice(id,p){try{await api('/services/'+id,{method:'PUT',body:{price:parseFloat(p)}});toast('Updated!');}catch(e){toast(e.message,'error');}}
 async function toggleServiceActive(id,a){try{await api('/services/'+id,{method:'PUT',body:{active:a?1:0}});loadServices();}catch(e){toast(e.message,'error');}}
+async function addService(e){e.preventDefault();const name=document.getElementById('new-service-name').value;const category=document.getElementById('new-service-category').value;const price=parseFloat(document.getElementById('new-service-price').value);const unit=document.getElementById('new-service-unit').value;try{await api('/services',{method:'POST',body:{name,category,price,unit}});toast('Service added!');closeModal();loadServices();}catch(e){toast(e.message,'error');}}
 
 // SETTINGS
 async function saveNotificationSettings(){try{await api('/settings',{method:'PUT',body:{notification_email:document.getElementById('set-notification-email').value,zelle_id:document.getElementById('set-zelle-id').value,tax_rate:document.getElementById('set-tax-rate').value}});toast('Settings saved!');}catch(e){toast(e.message,'error');}}
@@ -699,6 +706,168 @@ async function submitFeedback(e){
 
 // CLEARENT TERMINAL
 async function saveClearentSettings(){const apiKey=document.getElementById('set-clearent-api').value;const terminalId=document.getElementById('set-clearent-terminal').value;if(apiKey==='••••••••'){toast('Enter new API key or leave unchanged','error');return;}try{await api('/settings',{method:'PUT',body:{clearent_api_key:apiKey,clearent_terminal_id:terminalId}});toast('Terminal settings saved!');checkClearentStatus();}catch(e){toast(e.message,'error');}}
+
+async function savePrinterSettings(){
+  const printerType=document.getElementById('set-printer-type').value;
+  const printerConnection=document.getElementById('set-printer-connection').value;
+  const printerWidth=document.getElementById('set-printer-width').value;
+  const autoPrint=document.getElementById('set-auto-print').checked?'true':'false';
+  try{
+    await api('/settings',{method:'PUT',body:{printer_type:printerType,printer_connection:printerConnection,printer_width:printerWidth,auto_print:autoPrint}});
+    state.settings.printer_type=printerType;
+    state.settings.printer_connection=printerConnection;
+    state.settings.printer_width=printerWidth;
+    state.settings.auto_print=autoPrint;
+    toast('Printer settings saved!');
+    document.getElementById('printer-status').innerHTML='<span style="color:var(--kp-green)">✓ Settings saved</span>';
+  }catch(e){toast(e.message,'error');}
+}
+
+async function testPrint(){
+  const status=document.getElementById('printer-status');
+  if(!state.settings?.printer_type){status.innerHTML='<span style="color:var(--kp-red)">Please select a printer type first</span>';return;}
+  status.innerHTML='<span style="color:var(--kp-teal)">Sending test print...</span>';
+  try{
+    // Create test receipt
+    const testOrder = {
+      order_number: 'TEST-001',
+      customer_name: 'Test Customer',
+      customer_phone: '347-297-6088',
+      created_at: new Date().toISOString(),
+      items: [{service_name: 'Test Item', quantity: 1, price: 10.00}],
+      total: 10.89,
+      payment_status: 'unpaid',
+      payment_method: null
+    };
+    printReceiptWindow(testOrder);
+    status.innerHTML='<span style="color:var(--kp-green)">✓ Test print window opened</span>';
+  }catch(e){
+    status.innerHTML='<span style="color:var(--kp-red)">Print failed: '+e.message+'</span>';
+    toast('Print failed: '+e.message,'error');
+  }
+}
+
+function printReceipt(orderId){
+  const order = state.orders.find(o => o.id === orderId);
+  if(!order){toast('Order not found','error');return;}
+  printReceiptWindow(order);
+}
+
+function printReceiptWindow(order){
+  const items = order.items || [];
+  const subtotal = items.reduce((s,i) => s + (i.price * i.quantity), 0);
+  const tax = parseFloat(order.total) - subtotal;
+  const date = new Date(order.created_at);
+  
+  // Format for 80mm paper (48 characters width for Epson TM-T20II)
+  const w = 48;
+  const line = '='.repeat(w);
+  const dash = '-'.repeat(w);
+  
+  const center = (text) => {
+    const pad = Math.max(0, Math.floor((w - text.length) / 2));
+    return ' '.repeat(pad) + text;
+  };
+  
+  const leftRight = (left, right) => {
+    const space = w - left.length - right.length;
+    return left + ' '.repeat(Math.max(1, space)) + right;
+  };
+  
+  let receipt = `
+${line}
+${center('KLEEN PANDA')}
+${center('Professional Laundry Service')}
+${line}
+${center('113 E Tremont Ave')}
+${center('Bronx, NY 10453')}
+${center('(347) 297-6088')}
+${center('info@kleenpanda.com')}
+${line}
+
+${leftRight('Order:', order.order_number)}
+${leftRight('Date:', date.toLocaleDateString())}
+${leftRight('Time:', date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}))}
+${order.customer_name ? leftRight('Customer:', order.customer_name) : ''}
+${order.customer_phone ? leftRight('Phone:', formatPhone(order.customer_phone)) : ''}
+
+${dash}
+ITEMS
+${dash}
+`;
+
+  items.forEach(item => {
+    const name = item.service_name.substring(0, 28);
+    const qty = item.quantity.toString();
+    const price = formatCurrency(item.price * item.quantity);
+    receipt += leftRight(name, '') + '\n';
+    receipt += leftRight('  ' + qty + ' x ' + formatCurrency(item.price), price) + '\n';
+  });
+
+  receipt += `
+${dash}
+${leftRight('Subtotal:', formatCurrency(subtotal))}
+${leftRight('Tax (8.875%):', formatCurrency(tax))}
+${line}
+${leftRight('TOTAL:', formatCurrency(order.total))}
+${line}
+
+${leftRight('Payment:', order.payment_status === 'paid' ? 'PAID' : 'UNPAID')}
+${order.payment_method ? leftRight('Method:', order.payment_method.toUpperCase()) : ''}
+
+${center('Thank you for choosing')}
+${center('Kleen Panda!')}
+
+${center('Questions? Call us at')}
+${center('(347) 297-6088')}
+
+${line}
+`;
+
+  // Open print window
+  const printWindow = window.open('', '_blank', 'width=400,height=600');
+  printWindow.document.write(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Receipt - ${order.order_number}</title>
+  <style>
+    @page { 
+      size: 80mm auto;
+      margin: 0;
+    }
+    body { 
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px;
+      line-height: 1.2;
+      margin: 0;
+      padding: 5mm;
+      width: 80mm;
+      box-sizing: border-box;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    @media print {
+      body { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+<pre>${receipt}</pre>
+<script>
+  window.onload = function() {
+    window.print();
+    setTimeout(function() { window.close(); }, 500);
+  };
+</script>
+</body>
+</html>
+  `);
+  printWindow.document.close();
+}
 async function checkClearentStatus(){try{const s=await api('/payments/clearent/status');const el=document.getElementById('clearent-status');if(el)el.innerHTML=s.configured?'<span style="color:var(--kp-green)">✅ Terminal connected</span>':'<span style="color:var(--kp-red)">⚠️ Not configured</span>';}catch{}}
 async function processCardPayment(orderId,amount,orderNumber){try{toast('Sending to terminal...');const r=await api('/payments/clearent',{method:'POST',body:{orderId,amount,orderNumber}});if(r.success){toast('Payment approved!');return true;}else{toast(r.error||'Payment declined','error');return false;}}catch(e){if(e.message.includes('not configured')){toast('Configure Clearent in Settings first','error');}else{toast(e.message||'Terminal error','error');}return false;}}
 

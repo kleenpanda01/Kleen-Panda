@@ -487,6 +487,22 @@ app.get('/api/services', async (req, res) => {
   }
 });
 
+app.post('/api/services', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const { name, category, price, unit, description } = req.body;
+    if (!name || !category || price === undefined) {
+      return res.status(400).json({ error: 'Name, category, and price are required' });
+    }
+    const result = await pool.query(
+      'INSERT INTO services (name, category, price, unit, description, active) VALUES ($1, $2, $3, $4, $5, true) RETURNING *',
+      [name, category, price, unit || 'item', description || '']
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put('/api/services/:id', authMiddleware, async (req, res) => {
   try {
     const { price, active } = req.body;
@@ -1073,6 +1089,51 @@ app.get('/api/reports', authMiddleware, async (req, res) => {
       dateRange: { start: startDate.toISOString().slice(0,10), end: endDate.toISOString().slice(0,10) },
       priorDateRange: { start: priorStartDate.toISOString().slice(0,10), end: priorEndDate.toISOString().slice(0,10) }
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PRINT TEST
+app.post('/api/print/test', authMiddleware, async (req, res) => {
+  try {
+    // Get printer settings
+    const settingsResult = await pool.query("SELECT key, value FROM settings WHERE key LIKE 'printer_%'");
+    const settings = {};
+    settingsResult.rows.forEach(r => settings[r.key] = r.value);
+    
+    if (!settings.printer_type) {
+      return res.status(400).json({ error: 'No printer configured' });
+    }
+    
+    // For now, just log the print request
+    // In production, you would integrate with a print service like:
+    // - node-thermal-printer for USB/Network ESC/POS printers
+    // - Google Cloud Print API
+    // - PrintNode API
+    console.log('Test print requested:', settings);
+    
+    // Simulate print (in real implementation, send to printer)
+    const testReceipt = `
+================================
+        KLEEN PANDA
+     TEST RECEIPT PRINT
+================================
+Date: ${new Date().toLocaleString()}
+Printer: ${settings.printer_type}
+Connection: ${settings.printer_connection}
+${settings.printer_ip ? 'IP: ' + settings.printer_ip : ''}
+Paper Width: ${settings.printer_width || '80'}mm
+================================
+    If you see this, your
+    printer is configured
+         correctly!
+================================
+    `;
+    
+    console.log(testReceipt);
+    
+    res.json({ success: true, message: 'Test print sent' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
