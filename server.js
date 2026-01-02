@@ -335,7 +335,12 @@ async function initDB() {
       { name: 'card_last_four', type: 'VARCHAR(4)' },
       { name: 'card_token', type: 'TEXT' },
       { name: 'zelle_id', type: 'VARCHAR(255)' },
-      { name: 'notification_preference', type: "VARCHAR(10) DEFAULT 'sms'" }
+      { name: 'notification_preference', type: "VARCHAR(10) DEFAULT 'sms'" },
+      { name: 'notes', type: 'TEXT' },
+      { name: 'driver_instructions', type: 'TEXT' },
+      { name: 'detergent_type', type: 'VARCHAR(100)' },
+      { name: 'scent', type: 'VARCHAR(100)' },
+      { name: 'fabric_softener', type: 'VARCHAR(100)' }
     ];
     
     for (const col of customerColumns) {
@@ -546,7 +551,7 @@ app.post('/api/customers', authMiddleware, async (req, res) => {
 
 app.put('/api/customers/:id', authMiddleware, async (req, res) => {
   try {
-    const { name, phone, email, address, discount, subscription_plan, card_last_four, zelle_id } = req.body;
+    const { name, phone, email, address, discount, subscription_plan, card_last_four, zelle_id, notes, driver_instructions, detergent_type, scent, fabric_softener } = req.body;
     const result = await pool.query(
       `UPDATE customers SET 
         name = COALESCE($1, name), 
@@ -556,9 +561,14 @@ app.put('/api/customers/:id', authMiddleware, async (req, res) => {
         discount = COALESCE($5, discount),
         subscription_plan = COALESCE($6, subscription_plan),
         card_last_four = COALESCE($7, card_last_four),
-        zelle_id = COALESCE($8, zelle_id)
-      WHERE id = $9 RETURNING *`,
-      [name, phone, email, address, discount, subscription_plan, card_last_four, zelle_id, req.params.id]
+        zelle_id = COALESCE($8, zelle_id),
+        notes = COALESCE($9, notes),
+        driver_instructions = COALESCE($10, driver_instructions),
+        detergent_type = COALESCE($11, detergent_type),
+        scent = COALESCE($12, scent),
+        fabric_softener = COALESCE($13, fabric_softener)
+      WHERE id = $14 RETURNING *`,
+      [name, phone, email, address, discount, subscription_plan, card_last_four, zelle_id, notes, driver_instructions, detergent_type, scent, fabric_softener, req.params.id]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -580,6 +590,63 @@ app.delete('/api/customers/:id', authMiddleware, adminOnly, async (req, res) => 
     
     await pool.query('DELETE FROM customers WHERE id = $1', [req.params.id]);
     res.json({ success: true, message: 'Customer deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET CUSTOMER STATS
+app.get('/api/customers/:id/stats', authMiddleware, async (req, res) => {
+  try {
+    const customerId = req.params.id;
+    
+    // Get customer info
+    const customerResult = await pool.query('SELECT * FROM customers WHERE id = $1', [customerId]);
+    if (customerResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    const customer = customerResult.rows[0];
+    
+    // Get order stats
+    const statsResult = await pool.query(`
+      SELECT 
+        COUNT(*) as total_orders,
+        COALESCE(SUM(total), 0) as total_sales,
+        COALESCE(SUM(CASE WHEN payment_status = 'unpaid' THEN total ELSE 0 END), 0) as unpaid_amount,
+        MAX(created_at) as last_order_date
+      FROM orders WHERE customer_id = $1
+    `, [customerId]);
+    
+    const stats = statsResult.rows[0];
+    
+    res.json({
+      total_orders: parseInt(stats.total_orders),
+      total_sales: parseFloat(stats.total_sales),
+      unpaid_amount: parseFloat(stats.unpaid_amount),
+      last_order_date: stats.last_order_date,
+      signed_up_date: customer.created_at,
+      has_subscription: !!customer.subscription_plan,
+      subscription_plan: customer.subscription_plan
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET CUSTOMER ORDERS
+app.get('/api/customers/:id/orders', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, order_number, created_at, total, status, payment_status, payment_method, order_type, items
+       FROM orders WHERE customer_id = $1 ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    res.json(result.rows.map(o => ({
+      ...o,
+      total: parseFloat(o.total),
+      items: o.items || [],
+      item_count: (o.items || []).reduce((sum, i) => sum + (i.quantity || 1), 0)
+    })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
